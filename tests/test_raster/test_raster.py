@@ -137,6 +137,9 @@ class TestRaster:
         output = r.info()
         assert output is None
 
+        output = r.info(generic=False, verbose=False)
+        assert output == ""
+
         # Check all is good with passing attributes
         with rio.open(example) as dataset:
             for attr in _default_rio_attrs:
@@ -166,6 +169,9 @@ class TestRaster:
             if "MINIMUM" not in line:
                 continue
             assert line == new_stats.splitlines()[i]
+
+        output = r.info(generic=False, stats=True, verbose=False)
+        assert output.startswith("Statistics:")
 
     def test_load(self) -> None:
         """

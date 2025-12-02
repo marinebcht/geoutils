@@ -2047,12 +2047,12 @@ class Raster:
                 logging.warning("Statistic name '%s' is a not recognized string", stats_name)
 
     @overload
-    def info(self, stats: bool = False, *, verbose: Literal[True] = ...) -> None: ...
+    def info(self, generic: bool = True, stats: bool = False, *, verbose: Literal[True] = ...) -> None: ...
 
     @overload
-    def info(self, stats: bool = False, *, verbose: Literal[False]) -> str: ...
+    def info(self, generic: bool = True, stats: bool = False, *, verbose: Literal[False]) -> str: ...
 
-    def info(self, stats: bool = False, verbose: bool = True) -> None | str:
+    def info(self, generic: bool = True, stats: bool = False, verbose: bool = True) -> None | str:
         """
         Print summary information about the raster.
 
@@ -2062,25 +2062,28 @@ class Raster:
 
         :returns: Summary string or None.
         """
-        as_str = [
-            f"Driver:               {self.driver} \n",
-            f"Opened from file:     {self.filename} \n",
-            f"Filename:             {self.name} \n",
-            f"Loaded?               {self.is_loaded} \n",
-            f"Modified since load?  {self.is_modified} \n",
-            f"Grid size:            {self.width}, {self.height}\n",
-            f"Number of bands:      {self.count:d}\n",
-            f"Data types:           {self.dtype}\n",
-            f"Coordinate system:    {[self.crs.to_string() if self.crs is not None else None]}\n",
-            f"Nodata value:         {self.nodata}\n",
-            f"Pixel interpretation: {self.area_or_point}\n",
-            "Pixel size:           {}, {}\n".format(*self.res),
-            f"Upper left corner:    {self.bounds.left}, {self.bounds.top}\n",
-            f"Lower right corner:   {self.bounds.right}, {self.bounds.bottom}\n",
-        ]
+        info_str = []
+
+        if generic:
+            info_str = info_str  + [
+                f"Driver:               {self.driver} \n",
+                f"Opened from file:     {self.filename} \n",
+                f"Filename:             {self.name} \n",
+                f"Loaded?               {self.is_loaded} \n",
+                f"Modified since load?  {self.is_modified} \n",
+                f"Grid size:            {self.width}, {self.height}\n",
+                f"Number of bands:      {self.count:d}\n",
+                f"Data types:           {self.dtype}\n",
+                f"Coordinate system:    {[self.crs.to_string() if self.crs is not None else None]}\n",
+                f"Nodata value:         {self.nodata}\n",
+                f"Pixel interpretation: {self.area_or_point}\n",
+                "Pixel size:           {}, {}\n".format(*self.res),
+                f"Upper left corner:    {self.bounds.left}, {self.bounds.top}\n",
+                f"Lower right corner:   {self.bounds.right}, {self.bounds.bottom}\n",
+            ]
 
         if stats:
-            as_str.append("\nStatistics:\n")
+            info_str.append("\nStatistics:\n" if len(info_str) else "Statistics:\n")
             if not self.is_loaded:
                 self.load()
 
@@ -2092,22 +2095,22 @@ class Raster:
 
                 # Format the stats with aligned names
                 for name, value in statistics.items():
-                    as_str.append(f"{name.ljust(max_len)}: {value:.2f}\n")
+                    info_str.append(f"{name.ljust(max_len)}: {value:.2f}\n")
             else:
                 for b in range(self.count):
                     # try to keep with rasterio convention.
-                    as_str.append(f"Band {b + 1}:\n")
+                    info_str.append(f"Band {b + 1}:\n")
                     statistics = self.get_stats(band=b)
                     if isinstance(statistics, dict):
                         max_len = max(len(name) for name in statistics.keys())
                         for name, value in statistics.items():
-                            as_str.append(f"{name.ljust(max_len)}: {value:.2f}\n")
+                            info_str.append(f"{name.ljust(max_len)}: {value:.2f}\n")
 
         if verbose:
-            print("".join(as_str))
+            print("".join(info_str))
             return None
         else:
-            return "".join(as_str)
+            return "".join(info_str)
 
     def copy(self: RasterType, new_array: NDArrayNum | None = None, cast_nodata: bool = True) -> RasterType:
         """
