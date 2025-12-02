@@ -2056,6 +2056,7 @@ class Raster:
         """
         Print summary information about the raster.
 
+        :param generic: Add generics information.
         :param stats: Add statistics for each band of the dataset (max, min, median, mean, std. dev.). Default is to
             not calculate statistics.
         :param verbose: If set to True (default) will directly print to screen and return None
@@ -2065,7 +2066,7 @@ class Raster:
         info_str = []
 
         if generic:
-            info_str = info_str  + [
+            info_str = info_str + [
                 f"Driver:               {self.driver} \n",
                 f"Opened from file:     {self.filename} \n",
                 f"Filename:             {self.name} \n",
