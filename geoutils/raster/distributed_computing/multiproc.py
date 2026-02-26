@@ -216,13 +216,12 @@ def map_overlap_multiproc_save(
         "height": raster.height,
         "count": raster.count,
         "crs": raster.crs,
-        "transform": raster.transform,
+        "transform": result_tile0.transform,
         "dtype": result_tile0.dtype,
         "nodata": result_tile0.nodata,
     }
 
     raster_output = _write_multiproc_result(tasks, config, file_metadata)
-
     # Warns user if output file is a BigTIFF
     if raster_output._is_bigtiff():
         warnings.warn(
