@@ -68,8 +68,6 @@ else:
     MArrayNum = np.ma.masked_array  # type: ignore
     MArrayBool = np.ma.masked_array  # type: ignore
 
-
-
     NDArrayf = np.ndarray  # type: ignore
     NDArrayb = np.ndarray  # type: ignore
     MArrayf = np.ma.masked_array  # type: ignore

@@ -18,7 +18,6 @@ from typing import (
 
 import affine
 import geopandas as gpd
-import geoutils as gu
 import numpy as np
 import pandas as pd
 import rasterio as rio
@@ -26,19 +25,23 @@ import scipy
 import scipy.interpolate
 import scipy.ndimage
 import scipy.optimize
+
+import geoutils as gu
 from geoutils.interface.gridding import _grid_pointcloud
 from geoutils.interface.interpolation import _interp_points_base
-from geoutils.raster.referencing import _cast_pixel_interpretation, _coords
-from geoutils.raster.transformation import _translate, _build_geotiling_and_meta_apply_matrix
-from geoutils.multiproc.mparray import MultiprocConfig, _write_multiproc_result
-
-from geoutils.raster.apply_matrix_function import *
-
 from geoutils.multiproc.chunked import (
     ChunkedGeoGrid,
     GeoGrid,
     _chunks2d_from_chunksizes_shape,
 )
+from geoutils.multiproc.mparray import MultiprocConfig, _write_multiproc_result
+from geoutils.raster.apply_matrix_function import *
+from geoutils.raster.referencing import _cast_pixel_interpretation, _coords
+from geoutils.raster.transformation import (
+    _build_geotiling_and_meta_apply_matrix,
+    _translate,
+)
+
 
 @overload
 def _reproject_horizontal_shift_samecrs(
@@ -105,8 +108,6 @@ def _reproject_horizontal_shift_samecrs(
     return output
 
 
-
-
 @overload
 def apply_matrix(
     elev: NDArrayf,
@@ -135,7 +136,6 @@ def apply_matrix(
     multiproc_config: gu.raster.MultiprocConfig | None = None,
     **kwargs: Any,
 ) -> gu.Raster | gpd.GeoDataFrame: ...
-
 
 
 def apply_matrix(
@@ -197,14 +197,12 @@ def apply_matrix(
     # Or apply matrix to raster (often requires re-gridding)
     else:
 
-
-
         # If using Multiprocessing backend, process and return None (files written on disk)
         if mp_backend:
             # Get depth of overlap
             depth = 10  # ath.ceil(depth)
             _multiproc_apply_matrix(elev, multiproc_config, transform, matrix, invert, centroid, resampling)
-        else :
+        else:
             # First, we apply the affine matrix for the array/transform
             if isinstance(elev, gu.Raster):
                 transform = elev.transform
@@ -246,13 +244,13 @@ def _multiproc_apply_matrix(
     resampling: Literal["nearest", "linear", "cubic", "quintic"] = "linear",
     force_regrid_method: Literal["iterative", "griddata"] | None = None,
 ) -> tuple[NDArrayf, rio.transform.Affine]:
-    print ("_multiproc_apply_matrix")
+    print("_multiproc_apply_matrix")
 
     # Prepare geotiling and reprojection metadata for source and destination grids
     src_chunks = _chunks2d_from_chunksizes_shape(
         chunksizes=(mp_config.chunk_size, mp_config.chunk_size), shape=rst.shape
     )
-    print (src_chunks)
+    print(src_chunks)
     src_geotiling, dst_geotiling, dst_chunks, dest2source, src_block_ids, meta_params, dst_block_geogrids = (
         _build_geotiling_and_meta_apply_matrix(
             src_count=rst.count,
@@ -294,7 +292,6 @@ def translations_rotations_from_matrix(
     alpha1, alpha2, alpha3 = rots
 
     return t1, t2, t3, alpha1, alpha2, alpha3
-
 
 
 def _matrix_to_euler(rotation_matrix: NDArrayf, atol: float = 10e-8) -> tuple[float, float, float]:
@@ -458,7 +455,6 @@ def _iterate_affine_regrid_small_rotations(
     return transformed_dem.data.filled(np.nan), transform
 
 
-
 def _apply_matrix_rst(
     dem: NDArrayf,
     transform: rio.transform.Affine,
@@ -587,7 +583,6 @@ def _make_matrix_valid(matrix: NDArrayf) -> NDArrayf:
     return T
 
 
-
 def _apply_matrix_pts_arr(
     x: NDArrayf,
     y: NDArrayf,
@@ -617,7 +612,6 @@ def _apply_matrix_pts_arr(
         transformed_points += np.array(centroid)[:, None]
 
     return transformed_points[0, :], transformed_points[1, :], transformed_points[2, :]
-
 
 
 def _apply_matrix_pts(

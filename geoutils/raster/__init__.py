@@ -17,6 +17,7 @@
 # limitations under the License.
 
 from geoutils.raster.raster import Raster, RasterType, handled_array_funcs  # noqa isort:skip
+from geoutils.raster.apply_matrix_module import *  # noqa
 from geoutils.raster.array import *  # noqa
 from geoutils.raster.multiraster import *  # noqa
 
@@ -26,6 +27,5 @@ from geoutils.raster.referencing import *  # noqa
 from geoutils.raster.satimg import *  # noqa
 from geoutils.raster.tiling import *  # noqa
 from geoutils.raster.transformation import *  # noqa
-from geoutils.raster.apply_matrix_module import *  # noqa
 
 __all__ = ["RasterType", "Raster"]

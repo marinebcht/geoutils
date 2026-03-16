@@ -477,18 +477,17 @@ def _build_geotiling_and_meta_apply_matrix(
     # Define GeoGrids for source/destination array
     src_geogrid = GeoGrid(transform=src_transform, shape=src_shape, crs=src_crs)
     dst_geogrid = GeoGrid(transform=dst_transform, shape=dst_shape, crs=dst_crs)
-    print (src_geogrid)
-    print (dst_geogrid)
+    print(src_geogrid)
+    print(dst_geogrid)
     # Create tilings
     src_geotiling = ChunkedGeoGrid(grid=src_geogrid, chunks=src_chunks)
     dst_chunks = _chunks2d_from_chunksizes_shape(chunksizes=dst_chunksizes, shape=dst_shape)
     dst_geotiling = ChunkedGeoGrid(grid=dst_geogrid, chunks=dst_chunks)
-    print (src_geotiling, dst_chunks, dst_geotiling)
+    print(src_geotiling, dst_chunks, dst_geotiling)
     # 2/ Get bounds of tiles in CRS of destination array, with a buffer of 2 pixels for destination ones to ensure
     # overlap, then map indexes of source blocks that intersect a given destination block
     for gg in src_geotiling.get_blocks_as_geogrids():
-        print (gg, box(*gg.bounds_projected(crs=dst_crs)))
-
+        print(gg, box(*gg.bounds_projected(crs=dst_crs)))
 
     src_boxes = [box(*gg.bounds_projected(crs=dst_crs)) for gg in src_geotiling.get_blocks_as_geogrids()]
     dst_boxes = [
@@ -545,7 +544,6 @@ def _build_geotiling_and_meta_apply_matrix(
         )
 
     return src_geotiling, dst_geotiling, dst_chunks, dest2source, src_block_ids, meta_params, dst_block_geogrids
-
 
 
 def _reproject_per_block(
