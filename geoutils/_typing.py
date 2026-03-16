@@ -48,6 +48,10 @@ if sys.version_info.minor >= 9:
     MArrayNum = np.ma.masked_array[Any, np.dtype[Union[np.floating[Any], np.integer[Any]]]]
     MArrayBool = np.ma.masked_array[Any, np.dtype[np.bool_]]
 
+    NDArrayf = NDArray[np.floating[Any]]
+    NDArrayb = NDArray[np.bool_]
+    MArrayf = np.ma.masked_array[Any, np.dtype[np.floating[Any]]]
+
 # For backward compatibility before Python 3.9
 else:
 
@@ -63,3 +67,9 @@ else:
     NDArrayBool = np.ndarray  # type: ignore
     MArrayNum = np.ma.masked_array  # type: ignore
     MArrayBool = np.ma.masked_array  # type: ignore
+
+
+
+    NDArrayf = np.ndarray  # type: ignore
+    NDArrayb = np.ndarray  # type: ignore
+    MArrayf = np.ma.masked_array  # type: ignore

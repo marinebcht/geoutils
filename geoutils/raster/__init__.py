@@ -26,5 +26,6 @@ from geoutils.raster.referencing import *  # noqa
 from geoutils.raster.satimg import *  # noqa
 from geoutils.raster.tiling import *  # noqa
 from geoutils.raster.transformation import *  # noqa
+from geoutils.raster.apply_matrix_module import *  # noqa
 
 __all__ = ["RasterType", "Raster"]
