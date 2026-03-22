@@ -80,6 +80,15 @@ class TestVector:
         list_prints = ["Filename", "Coordinate system", "Extent", "Number of features", "Attributes"]
         assert all(p in output2 for p in list_prints)
 
+        # CRS = 2D
+        cs = v.info(verbose=False).split("\n")[6]
+        assert cs == "Coordinate system:    ['EPSG:32645']"
+
+        # CRS = None
+        v.set_crs(None)
+        cs = v.info(verbose=False).split("\n")[6]
+        assert cs == "Coordinate system:    [None]"
+
     def test_to_file(self) -> None:
         """Test the save wrapper for GeoDataFrame.to_file()."""
 

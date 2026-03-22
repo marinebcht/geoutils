@@ -13,6 +13,7 @@ import xarray as xr
 from packaging.version import Version
 from pandas.testing import assert_frame_equal
 from pyproj import CRS
+from pyproj.crs import CompoundCRS, VerticalCRS
 
 from geoutils import Raster, Vector, open_raster
 from geoutils.raster import MultiprocConfig
@@ -504,3 +505,48 @@ class TestClassVsAccessorConsistency:
 
         # TODO: Finalize after consistent input check function #850
         assert True
+
+    def test_info(self, lazy_test_files) -> None:
+        """Tests Coordinate system print in info()"""
+
+        path_raster = lazy_test_files[0]
+        raster = Raster(path_raster)
+        output = raster.info()
+        assert output is None
+
+        # General info
+        output2 = raster.info(verbose=False)
+        assert isinstance(output2, str)
+        list_prints = [
+            "Driver",
+            "Filename",
+            "Loaded?",
+            "Grid size",
+            "Number of bands",
+            "Data types",
+            "Coordinate system",
+            "Nodata value",
+            "Pixel interpretation",
+            "Pixel size",
+            "Upper left corner",
+            "Lower right corner",
+        ]
+        assert all(p in output2 for p in list_prints)
+
+        # CRS = 2D
+        cs = raster.info(verbose=False).split("\n")[6]
+        assert cs == "Coordinate system:    ['EPSG:32645']"
+
+        # CRS = None
+        raster.set_crs(None)
+        cs = raster.info(verbose=False).split("\n")[6]
+        assert cs == "Coordinate system:    [None]"
+
+        # CRS = 3D
+        vertcrs = VerticalCRS(name="EGM96 height", datum="EGM96 geoid")
+        projcrs = CRS(4326)
+        name = "my_crs_name"
+        compcrs = CompoundCRS(name=name, components=[projcrs, vertcrs])
+        raster.set_crs(compcrs)
+        cs = raster.info(verbose=False).split("\n")[6]
+        assert cs == "Coordinate system:    ['" + name + "']"
