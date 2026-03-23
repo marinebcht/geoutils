@@ -1,25 +1,17 @@
 from __future__ import annotations
 
-import copy
-import inspect
 import logging
 import warnings
 from typing import (
     Any,
     Callable,
-    Generator,
-    Iterable,
     Literal,
-    Mapping,
-    TypedDict,
-    TypeVar,
     overload,
 )
 
 import affine
 import geopandas as gpd
 import numpy as np
-import pandas as pd
 import rasterio as rio
 import scipy
 import scipy.interpolate
@@ -29,14 +21,10 @@ import scipy.optimize
 import geoutils as gu
 from geoutils.interface.gridding import _grid_pointcloud
 from geoutils.interface.interpolation import _interp_points_base
-from geoutils.multiproc.chunked import (
-    ChunkedGeoGrid,
-    GeoGrid,
-    _chunks2d_from_chunksizes_shape,
-)
+from geoutils.multiproc.chunked import _chunks2d_from_chunksizes_shape
 from geoutils.multiproc.mparray import MultiprocConfig, _write_multiproc_result
 from geoutils.raster.apply_matrix_function import *
-from geoutils.raster.referencing import _cast_pixel_interpretation, _coords
+from geoutils.raster.referencing import _coords, _default_nodata
 from geoutils.raster.transformation import (
     _build_geotiling_and_meta_apply_matrix,
     _translate,
@@ -106,6 +94,57 @@ def _reproject_horizontal_shift_samecrs(
         output = output.reshape(np.shape(raster_arr))
 
     return output
+
+
+def _check_reproj_nodata_dtype(
+    source_raster: RasterType,
+    nodata: int | float | None,
+    dtype: DTypeLike | None,
+    force_source_nodata: int | float | None,
+) -> tuple[DTypeLike, int | float | None, int | float | None]:
+    """Check user inputs of reproject regarding nodata and data type."""
+
+    # Set output dtype
+    if dtype is None:
+        # Warning: this will not work for multiple bands with different dtypes
+        dtype = source_raster.dtype
+
+    # --- Set source nodata if provided -- #
+    if force_source_nodata is None:
+        src_nodata = source_raster.nodata
+    else:
+        src_nodata = force_source_nodata
+        # Raise warning if a different nodata value exists for this raster than the forced one (not None)
+        if source_raster.nodata is not None:
+            warnings.warn(
+                "Forcing source nodata value of {} despite an existing nodata value of {} in the raster. "
+                "To silence this warning, use self.set_nodata() before reprojection instead of forcing.".format(
+                    force_source_nodata, source_raster.nodata
+                )
+            )
+
+    # --- Set destination nodata if provided -- #
+    # This is needed in areas not covered by the input data.
+    # If None, will use GeoUtils' default, as rasterio's default is unknown, hence cannot be handled properly.
+    if nodata is None:
+        nodata = source_raster.nodata
+        if nodata is None:
+            nodata = _default_nodata(dtype)
+            # If nodata is already being used, raise a warning.
+            if not source_raster.is_loaded:
+                warnings.warn(
+                    f"For reprojection, nodata must be set. Setting default nodata to {nodata}. You may "
+                    f"set a different nodata with `nodata`."
+                )
+
+            elif nodata in source_raster.data:
+                warnings.warn(
+                    f"For reprojection, nodata must be set. Default chosen value {nodata} exists in "
+                    f"self.data. This may have unexpected consequences. Consider setting a different nodata with "
+                    f"self.set_nodata()."
+                )
+
+    return dtype, src_nodata, nodata
 
 
 @overload
@@ -186,6 +225,7 @@ def apply_matrix(
     :return: Affine transformed elevation point cloud or DEM.
     """
 
+    print("[apply_matrix]")
     mp_backend = multiproc_config is not None
     # The check below can only run on Xarray
     # dask_backend = da is not None and elev._chunks is not None
@@ -201,7 +241,37 @@ def apply_matrix(
         if mp_backend:
             # Get depth of overlap
             depth = 10  # ath.ceil(depth)
-            _multiproc_apply_matrix(elev, multiproc_config, transform, matrix, invert, centroid, resampling)
+
+            dst_crs = elev.crs
+            dst_transform = elev.transform  # elev.translate(matrix[0][3], matrix[1][3]).transform
+            dst_shape = elev.shape
+
+            print("dst_shape", dst_shape)
+            print("dst_transform", dst_transform)
+            print("dst_crs", dst_crs)
+
+            # 2/ Check user input for nodata and dtype
+            dtype, src_nodata, nodata = _check_reproj_nodata_dtype(
+                source_raster=elev,
+                nodata=elev.nodata,
+                dtype=elev.dtype,
+                force_source_nodata=None,
+            )
+            print("dtype", dst_shape)
+            print("src_nodata", dst_transform)
+            print("nodata", dst_crs)
+
+            # 3/ Store georeferencing parameters for reprojection
+            apply_matrix_kwargs = {
+                "matrix": matrix,
+                "invert": invert,
+                "centroid": centroid,
+                "resample": resample,
+                "resampling": resampling,
+                "transform": transform,
+                "src_nodata": elev.nodata,
+            }
+            _multiproc_apply_matrix(elev, mp_config=multiproc_config, **apply_matrix_kwargs)
         else:
             # First, we apply the affine matrix for the array/transform
             if isinstance(elev, gu.Raster):
@@ -234,23 +304,99 @@ def apply_matrix(
             return applied_dem, out_transform
 
 
-def _multiproc_apply_matrix(
+def _reproject_per_block(
+    *src_arrs: tuple[NDArrayNum], block_ids: list[dict[str, int]], combined_meta: dict[str, Any], **kwargs: Any
+) -> NDArrayNum:
+    """
+    Reprojection per destination block (also rebuilds a square array combined from intersecting source blocks).
+    """
+
+    print("[_reproject_per_block]")
+    is_multiband = combined_meta["dst_count"] >= 2
+
+    # If no source chunk intersects, we return a chunk of destination nodata values
+    if len(src_arrs) == 0:
+        # We can use float32 to return NaN, will be cast to other floating type later if that's not source array dtype
+        dst_shape = (
+            (combined_meta["dst_count"], *combined_meta["dst_shape"]) if is_multiband else combined_meta["dst_shape"]
+        )
+        dst_arr = np.zeros(dst_shape, dtype=np.dtype("float32"))
+        dst_arr[:] = np.nan
+        return dst_arr
+
+    # First, we build an empty array with the combined shape, only with nodata values
+    shape = (src_arrs[0].shape[0], *combined_meta["src_shape"]) if is_multiband else combined_meta["src_shape"]
+
+    comb_src_arr = np.full(shape, kwargs["src_nodata"], dtype=src_arrs[0].dtype)
+    if np.ma.isMaskedArray(src_arrs[0]):
+        comb_src_arr = np.ma.masked_array(data=comb_src_arr)
+
+    # Then fill it with the source chunks values
+    for arr, bid in zip(src_arrs, block_ids):
+        comb_src_arr[..., bid["rys"] : bid["rye"], bid["rxs"] : bid["rxe"]] = arr
+    print("input blocks", comb_src_arr)
+
+    # Now, we can simply call Rasterio!
+    # We build the combined transform from tuple
+    src_transform = rio.transform.Affine(*combined_meta["src_transform"])
+    dst_transform = rio.transform.Affine(*combined_meta["dst_transform"])
+
+    # Reproject wrapper
+    # Force the number of threads to 1 to avoid Dask/Rasterio conflicting on multi-threading
+    kwargs.update(
+        {
+            "transform": src_transform,
+        }
+    )
+
+    matrix = kwargs["matrix"]
+    del kwargs["matrix"]
+    del kwargs["src_nodata"]
+
+    dst_arr, _ = apply_matrix(elev=comb_src_arr, matrix=matrix, **kwargs)  # type: ignore
+    return dst_arr
+
+
+def _wrapper_multiproc_apply_matrix_per_block(
     rst: Raster,
+    src_block_ids: list[dict[str, int]],
+    dst_block_id: dict[str, int],
+    idx_d2s: list[int],
+    block_ids: list[dict[str, int]],
+    combined_meta: dict[str, Any],
+    **kwargs: Any,
+) -> tuple[NDArrayNum, tuple[int, int, int, int]]:
+    """Wrapper to use Delayed reprojection per destination block
+    (also rebuilds a square array combined from intersecting source blocks)."""
+
+    print("[_wrapper_multiproc_apply_matrix_per_block", idx_d2s)
+
+    # Get source array block for each destination block
+    s = src_block_ids
+    xs = [s[idx]["xs"] for idx in idx_d2s]
+    ys = [s[idx]["ys"] for idx in idx_d2s]
+    src_arrs = (rst.icrop(bbox=(s[idx]["xs"], s[idx]["ys"], s[idx]["xe"], s[idx]["ye"])).data for idx in idx_d2s)
+
+    # Call reproject per block
+    dst_block_arr = _reproject_per_block(*src_arrs, block_ids=block_ids, combined_meta=combined_meta, **kwargs)
+    dst_block_arr = dst_block_arr[
+        dst_block_id["ys"] - min(ys) : dst_block_id["ye"] - min(ys),
+        dst_block_id["xs"] - min(xs) : dst_block_id["xe"] - min(xs),
+    ]
+    return dst_block_arr, (dst_block_id["ys"], dst_block_id["ye"], dst_block_id["xs"], dst_block_id["xe"])
+
+
+def _multiproc_apply_matrix(
+    rst: RasterType,
     mp_config: MultiprocConfig,
-    transform: rio.transform.Affine,
-    matrix: NDArrayf,
-    invert: bool = False,
-    centroid: tuple[float, float, float] | None = None,
-    resampling: Literal["nearest", "linear", "cubic", "quintic"] = "linear",
-    force_regrid_method: Literal["iterative", "griddata"] | None = None,
+    **kwargs: Any,
 ) -> tuple[NDArrayf, rio.transform.Affine]:
-    print("_multiproc_apply_matrix")
+    print("[_multiproc_apply_matrix]")
 
     # Prepare geotiling and reprojection metadata for source and destination grids
     src_chunks = _chunks2d_from_chunksizes_shape(
         chunksizes=(mp_config.chunk_size, mp_config.chunk_size), shape=rst.shape
     )
-    print(src_chunks)
     src_geotiling, dst_geotiling, dst_chunks, dest2source, src_block_ids, meta_params, dst_block_geogrids = (
         _build_geotiling_and_meta_apply_matrix(
             src_count=rst.count,
@@ -262,8 +408,46 @@ def _multiproc_apply_matrix(
             dst_crs=rst.crs,
             src_chunks=src_chunks,
             dst_chunksizes=(mp_config.chunk_size, mp_config.chunk_size),
+            matrix=kwargs["matrix"],
         )
     )
+
+    # Get location of destination blocks to write file
+    dst_block_ids = np.array(dst_geotiling.get_block_locations())
+
+    # Create tasks for multiprocessing
+    tasks = []
+    for i in range(len(dest2source)):
+
+        tasks.append(
+            mp_config.cluster.launch_task(
+                fun=_wrapper_multiproc_apply_matrix_per_block,
+                args=[
+                    rst,
+                    src_block_ids,
+                    dst_block_ids[i],
+                    dest2source[i],
+                    meta_params[i][1],
+                    meta_params[i][0],
+                ],
+                kwargs=kwargs,
+            )
+        )
+        print()
+
+    # Retrieve metadata for saving file
+    file_metadata = {
+        "width": rst.shape[1],
+        "height": rst.shape[0],
+        "count": rst.count,
+        "crs": rst.crs,
+        "transform": rst.transform,
+        "dtype": rst.dtype,
+        "nodata": rst.nodata,
+    }
+
+    # Create a new raster file to save the processed results
+    _write_multiproc_result(tasks, mp_config, file_metadata)
 
 
 def translations_rotations_from_matrix(

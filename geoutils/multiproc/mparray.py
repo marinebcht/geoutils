@@ -355,8 +355,9 @@ def _write_multiproc_result(
     with rio.open(mp_config.outfile, "w", driver=mp_config.driver, **file_metadata, BIGTIFF="IF_NEEDED") as dst:
         try:
             # Iterate over the tasks and retrieve the processed tiles
-            for results in tasks:
+            for r, results in enumerate(tasks):
                 result_tile, dst_tile = mp_config.cluster.get_res(results)
+                print(r, "/", result_tile, dst_tile)
                 is_mask = has_geo_attr(result_tile, "is_mask") and get_geo_attr(result_tile, "is_mask")
 
                 # Define the window in the output file where the tile should be written
