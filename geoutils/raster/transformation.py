@@ -45,7 +45,6 @@ from geoutils.multiproc.chunked import (
     _chunks2d_from_chunksizes_shape,
 )
 from geoutils.multiproc.mparray import MultiprocConfig, _write_multiproc_result
-from geoutils.raster.apply_matrix_function import _apply_matrix_pts_arr
 from geoutils.raster.referencing import (
     _default_nodata,
     _res,
@@ -371,155 +370,17 @@ def _build_geotiling_and_meta(
     dst_chunks = _chunks2d_from_chunksizes_shape(chunksizes=dst_chunksizes, shape=dst_shape)
     dst_geotiling = ChunkedGeoGrid(grid=dst_geogrid, chunks=dst_chunks)
 
-    print("  src_geotiling", src_geotiling)
-    print("  dst_chunks", dst_chunks)
-    print("  dst_geotiling", dst_geotiling)
-
     # 2/ Get bounds of tiles in CRS of destination array, with a buffer of 2 pixels for destination ones to ensure
     # overlap, then map indexes of source blocks that intersect a given destination block
     src_boxes = [box(*gg.bounds_projected(crs=dst_crs)) for gg in src_geotiling.get_blocks_as_geogrids()]
 
     dst_boxes = [
-        box(*gg.bounds_projected(crs=dst_crs))  # .buffer(2 * max(dst_geogrid.res))
+        box(*gg.bounds_projected(crs=dst_crs)).buffer(2 * max(dst_geogrid.res))
         for gg in dst_geotiling.get_blocks_as_geogrids()
     ]
 
-    print("src_boxes")
-    for b in range(len(src_boxes)):
-        print(src_boxes[b])
-
-    print("src_boxes")
-    for b in range(len(dst_boxes)):
-        print(dst_boxes[b])
-
     # Faster to use spatial index over source boxes
     tree = STRtree(src_boxes)
-    # For Shapely 2.0: STRtree.query(..., predicate="intersects") is fastest, for earlier versions we filter manually
-
-    # Quick feature check
-    try:
-        _ = tree.query(dst_boxes[0], predicate="intersects") if dst_boxes else []
-        has_predicate = True
-    except TypeError:
-        has_predicate = False
-
-    # Build mapping: for each destination box, list intersecting source indices
-    dest2source: list[list[int]] = []
-    print("  has_predicate", has_predicate)
-    if has_predicate:
-        # Shapely 2: Query returns indices directly (int array)
-        print("  len(dst_boxes)", len(dst_boxes))
-        for dst in dst_boxes:
-            idx = tree.query(dst, predicate="intersects")
-            dest2source.append([int(i) for i in np.asarray(idx).ravel()])
-    else:
-        # Shapely 1.8: Query returns geometries, so we convert to indices via id() map + filter intersects
-        id_to_idx = {id(g): i for i, g in enumerate(src_boxes)}
-        for dst in dst_boxes:
-            cand_geoms = tree.query(dst)
-            matches = [id_to_idx[id(g)] for g in cand_geoms if dst.intersects(g)]
-            dest2source.append(matches)
-
-    # 3/ To reconstruct a square source array during chunked reprojection, we need to derive the combined shape and
-    # transform of each tuples of source blocks
-    src_block_ids = src_geotiling.get_block_locations()
-    meta_params = [
-        (
-            _combined_blocks_shape_transform(sub_block_ids=[src_block_ids[i] for i in sbid], src_geogrid=src_geogrid)
-            if len(sbid) > 0
-            else ({}, [])
-        )
-        for sbid in dest2source
-    ]
-
-    # Append dst shape/transform to metadata
-    dst_block_geogrids = dst_geotiling.get_blocks_as_geogrids()
-    for i, (c, _) in enumerate(meta_params):
-        c.update(
-            {
-                "dst_shape": dst_block_geogrids[i].shape,
-                "dst_transform": tuple(dst_block_geogrids[i].transform),
-                "dst_count": src_count,
-            }
-        )
-    print("  dest2source", dest2source)
-    print("  src_block_ids", src_block_ids)
-    print("  len(dst_block_geogrids)", len(dst_block_geogrids))
-    return src_geotiling, dst_geotiling, dst_chunks, dest2source, src_block_ids, meta_params, dst_block_geogrids
-
-
-def _build_geotiling_and_meta_apply_matrix(
-    src_count: int,
-    src_shape: tuple[int, int],
-    src_transform: rio.transform.Affine,
-    src_crs: CRS,
-    dst_shape: tuple[int, int],
-    dst_transform: rio.transform.Affine,
-    dst_crs: CRS,
-    src_chunks: tuple[tuple[int, ...], tuple[int, ...]],
-    dst_chunksizes: tuple[int, int],
-    matrix,
-) -> tuple[
-    ChunkedGeoGrid,
-    ChunkedGeoGrid,
-    tuple[tuple[int, ...], tuple[int, ...]],
-    list[list[int]],
-    list[dict[str, int]],
-    list[tuple[dict[str, Any], list[dict[str, int]]]],
-    list[GeoGrid],
-]:
-    """
-    Constructs georeferenced tiling information and reprojection metadata for both source and destination grids,
-    used to support block-wise reprojection operations (e.g. with multiprocessing or dask).
-
-    This function performs the following:
-
-    1. Constructs `GeoGrid` and `ChunkedGeoGrid` objects for source and destination rasters,
-       based on provided shape, transform, CRS, and chunk sizes.
-    2. Computes spatial footprints for each chunk in both grids, and determines which
-       source chunks intersect each destination chunk (with a buffer to ensure overlap).
-    3. For each destination chunk, calculates metadata required for reprojection, including:
-       - The combined shape and transform of all intersecting source chunks.
-       - The specific shape and transform of the destination block.
-
-    :return: A tuple containing:
-        - Source `ChunkedGeoGrid`
-        - Destination `ChunkedGeoGrid`
-        - Destination chunks
-        - Mapping from destination to intersecting source block indices
-        - Array of source block locations
-        - List of metadata dictionaries per destination block
-        - List of destination `GeoGrid` blocks
-    """
-    # 1/ Define source and destination chunked georeferenced grid through simple classes storing CRS/transform/shape,
-    # which allow to consistently derive shape/transform for each block and their CRS-projected footprints
-    print("[_build_geotiling_and_meta_apply_matrix]")
-    # Define GeoGrids for source/destination array
-    src_geogrid = GeoGrid(transform=src_transform, shape=src_shape, crs=src_crs)
-    dst_geogrid = GeoGrid(transform=dst_transform, shape=dst_shape, crs=dst_crs)
-
-    # Create tilings
-    src_geotiling = ChunkedGeoGrid(grid=src_geogrid, chunks=src_chunks)
-    dst_chunks = _chunks2d_from_chunksizes_shape(chunksizes=dst_chunksizes, shape=dst_shape)
-    dst_geotiling = ChunkedGeoGrid(grid=dst_geogrid, chunks=dst_chunks)
-
-    # 2/ Get bounds of tiles in CRS of destination array, with a buffer of 2 pixels for destination ones to ensure
-    # overlap, then map indexes of source blocks that intersect a given destination block
-
-    src_boxes = [box(*gg.bounds_projected(crs=dst_crs)) for gg in src_geotiling.get_blocks_as_geogrids()]
-
-    dst_boxes = []
-    for k, gg in enumerate(dst_geotiling.get_blocks_as_geogrids()):
-        poly = box(*gg.bounds_projected(crs=dst_crs))
-        xx, yy = poly.exterior.coords.xy
-        dem = _apply_matrix_pts_arr(x=list(xx), y=list(yy), z=[0.0, 0.0, 0.0, 0.0, 0.0], invert=True, matrix=matrix)
-        poly_res = Polygon(zip(dem[0], dem[1]))
-        print("     => ", k, ":", poly, "<=", poly_res)
-        dst_boxes.append(poly_res)
-
-    # Faster to use spatial index over source boxes
-    tree = STRtree(src_boxes)
-
     # For Shapely 2.0: STRtree.query(..., predicate="intersects") is fastest, for earlier versions we filter manually
 
     # Quick feature check
@@ -567,9 +428,6 @@ def _build_geotiling_and_meta_apply_matrix(
             }
         )
 
-    print("  dest2source", dest2source)
-    print("  src_block_ids", src_block_ids)
-    print("  len(dst_block_geogrids)", len(dst_block_geogrids))
     return src_geotiling, dst_geotiling, dst_chunks, dest2source, src_block_ids, meta_params, dst_block_geogrids
 
 
@@ -788,15 +646,10 @@ def _wrapper_multiproc_reproject_per_block(
 
     # Get source array block for each destination block
     s = src_block_ids
-    print("src_block_ids", src_block_ids)
     src_arrs = (rst.icrop(bbox=(s[idx]["xs"], s[idx]["ys"], s[idx]["xe"], s[idx]["ye"])).data for idx in idx_d2s)
-    print("src_arrs", src_arrs)
 
     # Call reproject per block
     dst_block_arr = _reproject_per_block(*src_arrs, block_ids=block_ids, combined_meta=combined_meta, **kwargs)
-    print(dst_block_arr)
-    print(dst_block_id["ys"], dst_block_id["ye"], dst_block_id["xs"], dst_block_id["xe"])
-    print("\n")
     return dst_block_arr, (dst_block_id["ys"], dst_block_id["ye"], dst_block_id["xs"], dst_block_id["xe"])
 
 
@@ -818,13 +671,10 @@ def _multiproc_reproject(
     See Raster.reproject() for details.
     """
 
-    print("[_multiproc_reproject]")
-
     # Prepare geotiling and reprojection metadata for source and destination grids
     src_chunks = _chunks2d_from_chunksizes_shape(
         chunksizes=(mp_config.chunk_size, mp_config.chunk_size), shape=rst.shape
     )
-    print("src_chunks:", src_chunks)
 
     src_geotiling, dst_geotiling, dst_chunks, dest2source, src_block_ids, meta_params, dst_block_geogrids = (
         _build_geotiling_and_meta(
@@ -839,8 +689,6 @@ def _multiproc_reproject(
             dst_chunksizes=(mp_config.chunk_size, mp_config.chunk_size),
         )
     )
-
-    # print(dst_geotiling, dst_chunks, dest2source, src_block_ids, meta_params, dst_block_geogrids)
 
     # 4/ Call a delayed function that uses rio.warp to reproject the combined source block(s) to each destination block
     kwargs.update(
@@ -908,14 +756,11 @@ def _reproject(
     """
     Reproject raster. See Raster.reproject() for details.
     """
-    print("[_reproject]")
+
     # 1/ Check and normalize match-grid inputs
     dst_shape, dst_transform, dst_crs = _check_match_grid(
-        src=source_raster, ref=ref, res=res, shape=grid_size, bounds=bounds, crs=crs, coords=None
-    )
-    print("dst_shape", dst_shape)
-    print("dst_transform", dst_transform)
-    print("dst_crs", dst_crs)
+        src=source_raster, ref=ref, res=res, shape=grid_size, bounds=bounds, crs=crs, coords=None)
+
     # 2/ Check user input for nodata and dtype
     dtype, src_nodata, nodata = _check_reproj_nodata_dtype(
         source_raster=source_raster,
@@ -923,9 +768,6 @@ def _reproject(
         dtype=dtype,
         force_source_nodata=force_source_nodata,
     )
-    print("dtype", dst_shape)
-    print("src_nodata", dst_transform)
-    print("nodata", dst_crs)
 
     # 3/ Store georeferencing parameters for reprojection
     reproj_kwargs = {

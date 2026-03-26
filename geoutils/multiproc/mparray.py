@@ -357,7 +357,6 @@ def _write_multiproc_result(
             # Iterate over the tasks and retrieve the processed tiles
             for r, results in enumerate(tasks):
                 result_tile, dst_tile = mp_config.cluster.get_res(results)
-                print(r, "/", result_tile, dst_tile)
                 is_mask = has_geo_attr(result_tile, "is_mask") and get_geo_attr(result_tile, "is_mask")
 
                 # Define the window in the output file where the tile should be written
@@ -374,7 +373,7 @@ def _write_multiproc_result(
                 # If raster
                 else:
                     data = result_tile.data if result_tile.count > 1 else result_tile[np.newaxis, :, :]
-
+                print (r, "/", data[0][0][:3])
                 # Write the processed tile to the appropriate location in the output file
                 dst.write(data, window=dst_window)
             logging.info(f"Raster saved under {mp_config.outfile}")
