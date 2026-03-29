@@ -252,24 +252,16 @@ def _apply_matrix_per_block(
     src_transform = rio.transform.Affine(*combined_meta["src_transform"])
     dst_transform = rio.transform.Affine(*combined_meta["dst_transform"])
 
-    # Reproject wrapper
-    # Force the number of threads to 1 to avoid Dask/Rasterio conflicting on multi-threading
-    kwargs.update(
-        {
-            "transform": src_transform,
-        }
-    )
-
+    # Apply matrix wrapper
+    kwargs["transform"] = src_transform
     crs = kwargs["src_crs"]
     del kwargs["src_crs"] # TODO save
-
     dst_arr, out_transform = apply_matrix(elev=comb_src_arr, **kwargs)  # type: ignore
     print("src_transform", list(src_transform))
     print("dst_transform", list(dst_transform))
     print("dst_arr_after_apply_matrix=", dst_arr)
 
-    # Reproject wrapper
-    # Force the number of threads to 1 to avoid Dask/Rasterio conflicting on multi-threading
+    # Dst matrix selection
     kwargs.update(
         {
             "dst_shape": combined_meta["dst_shape"],
@@ -280,12 +272,10 @@ def _apply_matrix_per_block(
             "dst_nodata": src_nodata,
             "src_crs": crs,
             "dst_crs": crs,
+            "dtype": comb_src_arr.dtype,
+            "resampling": rio.enums.Resampling.nearest  # TODO ARG
         }
     )
-    # Define dtype if undefined
-    if "dtype" not in kwargs:
-        kwargs.update({"dtype": comb_src_arr.dtype})
-        kwargs.update({"resampling": rio.enums.Resampling.nearest})
 
     dst_arr_res = _rio_reproject(src_arr=dst_arr, reproj_kwargs=kwargs)  # type: ignore
     print("rio", dst_arr_res)
