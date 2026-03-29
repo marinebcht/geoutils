@@ -51,7 +51,6 @@ from geoutils.raster.transformation import _combined_blocks_shape_transform
 from geoutils.raster.transformation import _translate
 
 
-
 if TYPE_CHECKING:
     from geoutils.raster.base import RasterLike, RasterType
     from geoutils.raster.raster import Raster
@@ -128,8 +127,8 @@ def _build_geotiling_and_meta_apply_matrix(
     src_geogrid = GeoGrid(transform=src_transform, shape=src_shape, crs=src_crs)
     dst_geogrid = GeoGrid(transform=dst_transform, shape=dst_shape, crs=dst_crs)
 
-    print (src_transform, src_shape, src_crs, src_chunks)
-    print (dst_transform, dst_shape, dst_crs)
+    print(src_transform, src_shape, src_crs, src_chunks)
+    print(dst_transform, dst_shape, dst_crs)
 
     # Create tilings
     src_geotiling = ChunkedGeoGrid(grid=src_geogrid, chunks=src_chunks)
@@ -153,12 +152,12 @@ def _build_geotiling_and_meta_apply_matrix(
     for k, gg in enumerate(dst_geotiling.get_blocks_as_geogrids()):
         poly = box(*gg.bounds_projected(crs=dst_crs)).buffer(2 * max(dst_geogrid.res))
         xx, yy = poly.exterior.coords.xy
-        #zz_min, zz_max = mp_config.cluster.launch_task(fun=_wrapper_multiproc_nb_valids_per_block, args=[rst, src_block_ids[k]], kwargs={})
-        #zz = np.ones(len(xx)) * (zz_max - zz_min)
+        # zz_min, zz_max = mp_config.cluster.launch_task(fun=_wrapper_multiproc_nb_valids_per_block, args=[rst, src_block_ids[k]], kwargs={})
+        # zz = np.ones(len(xx)) * (zz_max - zz_min)
         zz = np.zeros(len(xx))
         dem = _apply_matrix_pts_arr(x=list(xx), y=list(yy), z=list(zz), invert=True, matrix=matrix)
         poly_res = Polygon(zip(dem[0], dem[1]))
-        print (k, " (z =", zz[0], "/", poly, "=>", poly_res)
+        print(k, " (z =", zz[0], "/", poly, "=>", poly_res)
         dst_boxes.append(poly_res)
 
     # Faster to use spatial index over source boxes
@@ -188,7 +187,7 @@ def _build_geotiling_and_meta_apply_matrix(
             matches = [id_to_idx[id(g)] for g in cand_geoms if dst.intersects(g)]
             dest2source.append(matches)
 
-    print ("dest2source:", dest2source)
+    print("dest2source:", dest2source)
 
     # 3/ To reconstruct a square source array during chunked reprojection, we need to derive the combined shape and
     # transform of each tuples of source blocks
@@ -216,13 +215,12 @@ def _build_geotiling_and_meta_apply_matrix(
     return src_geotiling, dst_geotiling, dst_chunks, dest2source, src_block_ids, meta_params, dst_block_geogrids
 
 
-
 def _reproject_horizontal_shift_samecrs(
-        raster_arr: NDArrayf,
-        src_transform: rio.transform.Affine,
-        dst_transform: rio.transform.Affine = None,
-        return_interpolator: bool = False,
-        resampling: Literal["nearest", "linear", "cubic", "quintic", "slinear", "pchip", "splinef2d"] = "linear",
+    raster_arr: NDArrayf,
+    src_transform: rio.transform.Affine,
+    dst_transform: rio.transform.Affine = None,
+    return_interpolator: bool = False,
+    resampling: Literal["nearest", "linear", "cubic", "quintic", "slinear", "pchip", "splinef2d"] = "linear",
 ) -> NDArrayf | Callable[[tuple[NDArrayf, NDArrayf]], NDArrayf]:
     """
     Reproject a raster only for a horizontal shift (transform update) in the same CRS.
@@ -237,6 +235,7 @@ def _reproject_horizontal_shift_samecrs(
     # We are reprojecting the raster array relative to itself without changing its pixel interpretation, so we can
     # force any pixel interpretation (area_or_point) without it having any influence on the result, here "Area"
     from geoutils.raster.referencing import _coords
+
     if not return_interpolator:
         coords_dst = _coords(transform=dst_transform, area_or_point="Area", shape=raster_arr.shape)
         # Flatten the arrays (only 1D supported in rowcol/xy after Rasterio 1.4)
@@ -246,6 +245,7 @@ def _reproject_horizontal_shift_samecrs(
         coords_dst = None
 
     from geoutils.interface.interpolation import _interp_points_base
+
     output = _interp_points_base(
         array=raster_arr,
         area_or_point="Area",
@@ -311,7 +311,6 @@ def _check_nodata_dtype(
                 )
 
     return dtype, src_nodata, nodata
-
 
 
 def translations_rotations_from_matrix(
@@ -569,6 +568,7 @@ def _apply_matrix_rst(
     trans_epc = _apply_matrix_pts(epc, matrix=matrix, centroid=centroid)
 
     from geoutils.interface.gridding import _grid_pointcloud
+
     new_dem = _grid_pointcloud(
         trans_epc, grid_coords=dem_rst.coords(grid=False), data_column_name="z", resampling=resampling
     )[0]
@@ -672,7 +672,6 @@ def _apply_matrix_pts(
     return transformed_epc
 
 
-
 def translations_rotations_from_matrix(
     matrix: NDArrayf, return_degrees: bool = True
 ) -> tuple[float, float, float, float, float, float]:
@@ -699,7 +698,6 @@ def translations_rotations_from_matrix(
     alpha1, alpha2, alpha3 = rots
 
     return t1, t2, t3, alpha1, alpha2, alpha3
-
 
 
 def _matrix_to_euler(rotation_matrix: NDArrayf, atol: float = 10e-8) -> tuple[float, float, float]:
@@ -863,7 +861,6 @@ def _iterate_affine_regrid_small_rotations(
     return transformed_dem.data.filled(np.nan), transform
 
 
-
 def invert_matrix(matrix: NDArrayf, atol: float = 10e-8) -> NDArrayf:
     """
     Invert a transformation matrix.
@@ -921,7 +918,6 @@ def _make_matrix_valid(matrix: NDArrayf) -> NDArrayf:
     return T
 
 
-
 def _apply_matrix_pts_arr(
     x: NDArrayf,
     y: NDArrayf,
@@ -951,7 +947,6 @@ def _apply_matrix_pts_arr(
         transformed_points += np.array(centroid)[:, None]
 
     return transformed_points[0, :], transformed_points[1, :], transformed_points[2, :]
-
 
 
 def _apply_matrix_pts(
