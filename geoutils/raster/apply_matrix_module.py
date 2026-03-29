@@ -22,6 +22,7 @@ from geoutils.raster.apply_matrix_function import _check_nodata_dtype, _reprojec
 from geoutils._misc import import_optional, silence_rasterio_message
 
 
+
 # Dask as optional dependency
 try:
     import dask.array as da
@@ -145,7 +146,6 @@ def apply_matrix(
             #dem = elev.data.filled(np.nan)
         else:
             dem = elev
-        print("[apply_matrix] trasnform", list(transform))
 
         # If using Multiprocessing backend, process and return None (files written on disk)
         if mp_backend or dask_backend:
@@ -170,8 +170,6 @@ def apply_matrix(
                 "src_crs": elev.crs
             }
 
-            print ("[apply_matrix] trasnform", list(transform))
-
             if multiproc_config:
                 _multiproc_apply_matrix(elev, mp_config=multiproc_config, **apply_matrix_kwargs)
                 new_raster = gu.Raster(multiproc_config.outfile)
@@ -179,13 +177,11 @@ def apply_matrix(
 
             elif da is not None and isinstance(elev.data, da.Array):
                 dst_arr = _dask_apply_matrix(darr=elev.data, **apply_matrix_kwargs)
-                dst_arr = gu.raster.xr_accessor.RasterAccessor.from_array(
-                    data=dst_arr, transform=transform, crs=elev.crs, nodata=elev.nodata,
-                    area_or_point=elev.area_or_point, tags=elev.tags
-                )
-
-                return dst_arr
+                return dst_arr, transform
         else:
+
+            # Then, if resample is True, we reproject the DEM from its out_transform onto the transform
+            """"""
 
             applied_dem, out_transform = _apply_matrix_rst(
                 dem=dem,
@@ -199,7 +195,6 @@ def apply_matrix(
 
             # Then, if resample is True, we reproject the DEM from its out_transform onto the transform
             if resample:
-                print ("passage dans if resample:")
                 applied_dem = _reproject_horizontal_shift_samecrs(
                     applied_dem, src_transform=out_transform, dst_transform=transform, resampling=resampling
                 )
@@ -245,10 +240,13 @@ def _apply_matrix_per_block(
     # Then fill it with the source chunks values
     for arr, bid in zip(src_arrs, block_ids):
         comb_src_arr[..., bid["rys"] : bid["rye"], bid["rxs"] : bid["rxe"]] = arr
-    print (comb_src_arr)
+
+    print ("input", comb_src_arr)
+
     # Now, we can simply call Rasterio!
     # We build the combined transform from tuple
     src_transform = rio.transform.Affine(*combined_meta["src_transform"])
+    dst_transform = rio.transform.Affine(*combined_meta["dst_transform"])
 
     # Reproject wrapper
     # Force the number of threads to 1 to avoid Dask/Rasterio conflicting on multi-threading
@@ -258,10 +256,64 @@ def _apply_matrix_per_block(
         }
     )
 
-    dst_arr, _ = apply_matrix(elev=comb_src_arr, **kwargs)  # type: ignore
-    print (dst_arr)
+    crs = kwargs["src_crs"]
+    del kwargs["src_crs"]
+    dst_arr, out_transform = apply_matrix(elev=comb_src_arr, **kwargs)  # type: ignore
+    print ("src_transform", list(src_transform))
+    print ("dst_transform", list(dst_transform))
+    print ("dst_arr_after_apply_matrix=", dst_arr)
+    from geoutils.raster.transformation import _rio_reproject
+    # Reproject wrapper
+    # Force the number of threads to 1 to avoid Dask/Rasterio conflicting on multi-threading
+    kwargs.update(
+        {
+            "dst_shape":  combined_meta["dst_shape"],
+            "src_transform": out_transform,
+            "dst_transform": dst_transform,
+            "num_threads": 1,
+            "src_nodata": src_nodata,
+            "dst_nodata": src_nodata,
+            "src_crs": crs,
+            "dst_crs": crs
+        }
+    )
+    # Define dtype if undefined
+    if "dtype" not in kwargs:
+        kwargs.update({"dtype": comb_src_arr.dtype})
+        kwargs.update({"resampling": rio.enums.Resampling.nearest})
 
-    return dst_arr
+    print ("kwargs=", kwargs)
+    dst_arr_res = _rio_reproject(src_arr=dst_arr, reproj_kwargs=kwargs)  # type: ignore
+    print ("rio", dst_arr_res)
+    """x_min_before = list(src_transform)[2]
+    x_min_after = list(dst_transform)[2]
+    x_dec = x_min_after - x_min_before
+    y_min_before = list(src_transform)[5]
+    y_min_after = list(dst_transform)[5]
+    y_dec = y_min_after - y_min_before
+
+    y_res = int(list(dst_transform)[4])
+    x_res = int(list(dst_transform)[8])
+
+    y_start = int(y_dec * y_res)
+    x_start = int(x_dec * x_res)
+    print (len(dst_arr), "y:", y_start, "->", y_start+kwargs["dst_shape"][0])
+    print (len(dst_arr), "x:", x_start, "->", x_start+kwargs["dst_shape"][0])
+    print("dst_arr", dst_arr)
+    print (y_start, y_start+kwargs["dst_shape"][0], x_start,x_start+kwargs["dst_shape"][1])
+    print (dst_arr[y_start:y_start+kwargs["dst_shape"][0]])
+    dst_arr = dst_arr[y_start:y_start+kwargs["dst_shape"][0], x_start:x_start+kwargs["dst_shape"][1]]
+    print (dst_arr)"""
+    return dst_arr_res
+
+def _wrapper_multiproc_nb_valids_per_block(rst: Raster, tile_idx: NDArrayNum) -> int:
+    """Count valid values in one tile out-of-memory."""
+    rst_block = rst.icrop((tile_idx[2], tile_idx[0], tile_idx[3], tile_idx[1]))
+    arr = rst_block.data
+
+    if np.issubdtype(arr.dtype, np.bool_):
+        return int(np.count_nonzero(arr))
+    return int(np.count_nonzero(~get_mask_from_array(arr)))
 
 
 def _wrapper_multiproc_apply_matrix_per_block(
@@ -278,25 +330,15 @@ def _wrapper_multiproc_apply_matrix_per_block(
 
     # Get source array block for each destination block
     s = src_block_ids
-    xs = [s[idx]["xs"] for idx in idx_d2s]
-    ys = [s[idx]["ys"] for idx in idx_d2s]
-
     src_arrs = (rst.icrop(bbox=(s[idx]["xs"], s[idx]["ys"], s[idx]["xe"], s[idx]["ye"])).data for idx in idx_d2s)
 
     # Call reproject per block
     dst_block_arr = _apply_matrix_per_block(*src_arrs, block_ids=block_ids, combined_meta=combined_meta, **kwargs)
-    dst_block_arr = dst_block_arr[dst_block_id["ys"] - min(ys): dst_block_id["ye"] - min(ys),
-                                 dst_block_id["xs"] - min(xs): dst_block_id["xe"] - min(xs)]
-    print (dst_block_id["ys"], min(ys), '/', dst_block_id["ye"] , min(ys),'/',
-                                 dst_block_id["xs"] ,min(xs), '/', dst_block_id["xe"] ,min(xs))
-    print (dst_block_arr)
-    print ()
     return dst_block_arr, (dst_block_id["ys"], dst_block_id["ye"], dst_block_id["xs"], dst_block_id["xe"])
 
 
 def _multiproc_apply_matrix(
     rst: RasterType,
-    src_crs,
     mp_config: MultiprocConfig,
     **kwargs: Any,
 ) -> tuple[NDArrayf, rio.transform.Affine]:
@@ -311,23 +353,27 @@ def _multiproc_apply_matrix(
             src_count=rst.count,
             src_shape=rst.shape,
             src_transform=kwargs["transform"],
-            src_crs=src_crs,
+            src_crs=kwargs["src_crs"],
             dst_shape=rst.shape,
             dst_transform=kwargs["transform"],
-            dst_crs=src_crs,
+            dst_crs=kwargs["src_crs"],
             src_chunks=src_chunks,
             dst_chunksizes=(mp_config.chunk_size, mp_config.chunk_size),
             matrix=kwargs["matrix"],
+            mp_config=mp_config,
+            rst=rst
         )
     )
 
+    print ()
     # Get location of destination blocks to write file
     dst_block_ids = np.array(dst_geotiling.get_block_locations())
 
     # Create tasks for multiprocessing
     tasks = []
+    print ("Task")
     for i in range(len(dest2source)):
-
+        print(i, "/")
         tasks.append(
             mp_config.cluster.launch_task(
                 fun=_wrapper_multiproc_apply_matrix_per_block,
@@ -342,6 +388,7 @@ def _multiproc_apply_matrix(
                 kwargs=kwargs,
             )
         )
+        print ()
 
     # Retrieve metadata for saving file
     file_metadata = {
@@ -372,7 +419,6 @@ def _delayed_apply_matrix_per_block(
 
 def _dask_apply_matrix(
     darr: da.Array,
-    src_crs,
     **kwargs: Any,
 ) -> da.Array:
 
@@ -390,15 +436,18 @@ def _dask_apply_matrix(
             src_count=darr.shape[0] if darr.ndim == 3 else 1,
             src_shape=darr.shape[-2:],  # In case input is multi-band
             src_transform=kwargs["transform"],
-            src_crs=src_crs,
+            src_crs=kwargs["src_crs"],
             dst_shape=darr.shape[-2:],  # In case input is multi-band
             dst_transform=kwargs["transform"],
-            dst_crs=src_crs,
+            dst_crs=kwargs["src_crs"],
             src_chunks=src_chunks,
             dst_chunksizes=dst_chunksizes,
             matrix=kwargs["matrix"],
         )
     )
+
+    dst_block_ids = np.array(dst_geotiling.get_block_locations())
+
 
     # Create a delayed object for each block, and flatten the blocks into a 1d shape
     blocks_delayed = darr.to_delayed()
@@ -439,6 +488,7 @@ def _dask_apply_matrix(
                 **kwargs,
             )
             shape = shp2 if bb is None else (nb, *shp2)
+
             # We define the expected output shape and dtype to simplify things for Dask
             return da.from_delayed(r, shape=shape, dtype=out_dtype)
 
@@ -448,7 +498,6 @@ def _dask_apply_matrix(
 
     # Run the delayed reprojection, looping for each destination block-band (2D block and 1D band-chunk)
     list_reproj_da = [_dst_block_as_da(i) for i in range(len(dest2source))]
-
     # Array comes out as flat blocks x chunksize0 (varying) x chunksize1 (varying), so we can't reshape directly
     # We need to unravel the flattened blocks indices to align X/Y, then concatenate all columns, then rows
     ny_dst, nx_dst = len(dst_chunks[0]), len(dst_chunks[1])
@@ -460,6 +509,6 @@ def _dask_apply_matrix(
         for r in range(ny_dst)
     ]
     concat_all = da.concatenate(rows, axis=ax_y)
-
     return concat_all
+
 

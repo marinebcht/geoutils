@@ -373,7 +373,7 @@ def _write_multiproc_result(
                 # If raster
                 else:
                     data = result_tile.data if result_tile.count > 1 else result_tile[np.newaxis, :, :]
-                print (r, "/", data[0][0][:3])
+
                 # Write the processed tile to the appropriate location in the output file
                 dst.write(data, window=dst_window)
             logging.info(f"Raster saved under {mp_config.outfile}")

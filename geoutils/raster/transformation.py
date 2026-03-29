@@ -375,7 +375,7 @@ def _build_geotiling_and_meta(
     src_boxes = [box(*gg.bounds_projected(crs=dst_crs)) for gg in src_geotiling.get_blocks_as_geogrids()]
 
     dst_boxes = [
-        box(*gg.bounds_projected(crs=dst_crs)).buffer(2 * max(dst_geogrid.res))
+        box(*gg.bounds_projected(crs=dst_crs))# .buffer(2 * max(dst_geogrid.res))
         for gg in dst_geotiling.get_blocks_as_geogrids()
     ]
 
@@ -404,6 +404,8 @@ def _build_geotiling_and_meta(
             cand_geoms = tree.query(dst)
             matches = [id_to_idx[id(g)] for g in cand_geoms if dst.intersects(g)]
             dest2source.append(matches)
+
+    print ("dest2source", dest2source)
 
     # 3/ To reconstruct a square source array during chunked reprojection, we need to derive the combined shape and
     # transform of each tuples of source blocks
@@ -460,6 +462,10 @@ def _reproject_per_block(
     # Then fill it with the source chunks values
     for arr, bid in zip(src_arrs, block_ids):
         comb_src_arr[..., bid["rys"] : bid["rye"], bid["rxs"] : bid["rxe"]] = arr
+
+    print(combined_meta["dst_shape"])
+    print(combined_meta["src_transform"])
+    print(combined_meta["dst_transform"])
 
     # Now, we can simply call Rasterio!
     # We build the combined transform from tuple
@@ -650,6 +656,7 @@ def _wrapper_multiproc_reproject_per_block(
 
     # Call reproject per block
     dst_block_arr = _reproject_per_block(*src_arrs, block_ids=block_ids, combined_meta=combined_meta, **kwargs)
+    print ("out", dst_block_arr)
     return dst_block_arr, (dst_block_id["ys"], dst_block_id["ye"], dst_block_id["xs"], dst_block_id["xe"])
 
 
@@ -706,6 +713,7 @@ def _multiproc_reproject(
     # Create tasks for multiprocessing
     tasks = []
     for i in range(len(dest2source)):
+        print ("i:", i)
         tasks.append(
             mp_config.cluster.launch_task(
                 fun=_wrapper_multiproc_reproject_per_block,
@@ -720,6 +728,7 @@ def _multiproc_reproject(
                 kwargs=kwargs,
             )
         )
+        print ()
 
     # Retrieve metadata for saving file
     file_metadata = {

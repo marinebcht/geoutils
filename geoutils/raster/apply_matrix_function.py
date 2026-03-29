@@ -87,6 +87,8 @@ def _build_geotiling_and_meta_apply_matrix(
     src_chunks: tuple[tuple[int, ...], tuple[int, ...]],
     dst_chunksizes: tuple[int, int],
     matrix,
+    mp_config,
+    rst,
 ) -> tuple[
     ChunkedGeoGrid,
     ChunkedGeoGrid,
@@ -126,6 +128,9 @@ def _build_geotiling_and_meta_apply_matrix(
     src_geogrid = GeoGrid(transform=src_transform, shape=src_shape, crs=src_crs)
     dst_geogrid = GeoGrid(transform=dst_transform, shape=dst_shape, crs=dst_crs)
 
+    print (src_transform, src_shape, src_crs, src_chunks)
+    print (dst_transform, dst_shape, dst_crs)
+
     # Create tilings
     src_geotiling = ChunkedGeoGrid(grid=src_geogrid, chunks=src_chunks)
     dst_chunks = _chunks2d_from_chunksizes_shape(chunksizes=dst_chunksizes, shape=dst_shape)
@@ -136,14 +141,24 @@ def _build_geotiling_and_meta_apply_matrix(
 
     src_boxes = [box(*gg.bounds_projected(crs=dst_crs)) for gg in src_geotiling.get_blocks_as_geogrids()]
 
+    def _wrapper_multiproc_nb_valids_per_block(rst: Raster, tile_idx: NDArrayNum) -> int:
+        """Count valid values in one tile out-of-memory."""
+        rst_block = rst.icrop((tile_idx["xs"], tile_idx["ys"], tile_idx["xe"], tile_idx["ye"]))
+        arr = rst_block.data
+        return arr.min(), arr.max()
+
+    src_block_ids = src_geotiling.get_block_locations()
+
     dst_boxes = []
     for k, gg in enumerate(dst_geotiling.get_blocks_as_geogrids()):
         poly = box(*gg.bounds_projected(crs=dst_crs)).buffer(2 * max(dst_geogrid.res))
         xx, yy = poly.exterior.coords.xy
+        #zz_min, zz_max = mp_config.cluster.launch_task(fun=_wrapper_multiproc_nb_valids_per_block, args=[rst, src_block_ids[k]], kwargs={})
+        #zz = np.ones(len(xx)) * (zz_max - zz_min)
         zz = np.zeros(len(xx))
         dem = _apply_matrix_pts_arr(x=list(xx), y=list(yy), z=list(zz), invert=True, matrix=matrix)
         poly_res = Polygon(zip(dem[0], dem[1]))
-        print ("k", poly, "=>", poly_res)
+        print (k, " (z =", zz[0], "/", poly, "=>", poly_res)
         dst_boxes.append(poly_res)
 
     # Faster to use spatial index over source boxes
@@ -172,6 +187,8 @@ def _build_geotiling_and_meta_apply_matrix(
             cand_geoms = tree.query(dst)
             matches = [id_to_idx[id(g)] for g in cand_geoms if dst.intersects(g)]
             dest2source.append(matches)
+
+    print ("dest2source:", dest2source)
 
     # 3/ To reconstruct a square source array during chunked reprojection, we need to derive the combined shape and
     # transform of each tuples of source blocks
