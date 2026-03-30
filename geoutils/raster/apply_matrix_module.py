@@ -84,7 +84,8 @@ def apply_matrix(
     centroid: tuple[float, float, float] | None = None,
     resample: bool = True,
     resampling: Literal["nearest", "linear", "cubic", "quintic"] = "linear",
-    transform: rio.transform.Affine = None,
+    src_transform: rio.transform.Affine = None,
+    dst_transform: rio.transform.Affine = None,
     z_name: str = "z",
     multiproc_config: gu.raster.MultiprocConfig | None = None,
     **kwargs: Any,
@@ -143,10 +144,10 @@ def apply_matrix(
     else:
 
         if isinstance(elev, gu.Raster):
-            transform = elev.transform
+            src_transform = elev.transform
             dem = elev.data.filled(np.nan)
         elif isinstance(elev, gu.raster.xr_accessor.RasterAccessor):
-            transform = elev.transform
+            src_transform = elev.transform
             # dem = elev.data.filled(np.nan)
         else:
             dem = elev
@@ -162,17 +163,19 @@ def apply_matrix(
                 force_source_nodata=None,
             )
 
-            # 3/ Store georeferencing parameters for reprojection
+            # 3/ Store georeferencing parameters for apply_matrix
             apply_matrix_kwargs = {
                 "matrix": matrix,
                 "invert": invert,
                 "centroid": centroid,
                 "resample": resample,
                 "resampling": resampling,
-                "transform": transform,
+                "transform": src_transform,
                 "src_nodata": src_nodata,
                 "src_crs": elev.crs,
             }
+
+            print ("avant apply", apply_matrix_kwargs.keys())
 
             if multiproc_config:
                 _multiproc_apply_matrix(elev, mp_config=multiproc_config, **apply_matrix_kwargs)
@@ -181,28 +184,37 @@ def apply_matrix(
 
             elif da is not None and isinstance(elev.data, da.Array):
                 dst_arr = _dask_apply_matrix(darr=elev.data, **apply_matrix_kwargs)
-                return dst_arr, transform
+
+                if dst_transform is None:
+                    if resample == True:
+                        dst_transform = src_transform
+
+
+                return gu.raster.xr_accessor.RasterAccessor.from_array(
+                    data=dst_arr, transform=dst_transform, crs=elev.crs, nodata=np.nan, area_or_point=elev.area_or_point,
+                    tags=elev.tags
+                )
         else:
 
             # Then, if resample is True, we reproject the DEM from its out_transform onto the transform
-            """"""
+
+            if dst_transform is None:
+                if resample == True:
+                    dst_transform = src_transform
 
             applied_dem, out_transform = _apply_matrix_rst(
                 dem=dem,
-                transform=transform,
+                transform=src_transform,
                 matrix=matrix,
                 invert=invert,
                 centroid=centroid,
                 resampling=resampling,
+                resample=resample,
+                out_transform=dst_transform,
                 **kwargs,
             )
 
-            # Then, if resample is True, we reproject the DEM from its out_transform onto the transform
-            if resample:
-                applied_dem = _reproject_horizontal_shift_samecrs(
-                    applied_dem, src_transform=out_transform, dst_transform=transform, resampling=resampling
-                )
-                out_transform = transform
+
 
             # We return a raster if input was a raster
             if isinstance(elev, gu.Raster):
@@ -245,42 +257,24 @@ def _apply_matrix_per_block(
     for arr, bid in zip(src_arrs, block_ids):
         comb_src_arr[..., bid["rys"] : bid["rye"], bid["rxs"] : bid["rxe"]] = arr
 
-    print("input", comb_src_arr)
 
     # Now, we can simply call Rasterio!
     # We build the combined transform from tuple
     src_transform = rio.transform.Affine(*combined_meta["src_transform"])
     dst_transform = rio.transform.Affine(*combined_meta["dst_transform"])
-
     # Apply matrix wrapper
-    kwargs["transform"] = src_transform
-    crs = kwargs["src_crs"]
     del kwargs["src_crs"] # TODO save
+    del kwargs["transform"] # TODO save
+    kwargs["src_transform"] = src_transform
+    kwargs["dst_transform"] = dst_transform
+
+    print("avant apply_rst", kwargs.keys())
+
     dst_arr, out_transform = apply_matrix(elev=comb_src_arr, **kwargs)  # type: ignore
-    print("src_transform", list(src_transform))
-    print("dst_transform", list(dst_transform))
-    print("dst_arr_after_apply_matrix=", dst_arr)
+    dst_arr = dst_arr[:combined_meta["dst_shape"][0], :combined_meta["dst_shape"][1]]
 
-    # Dst matrix selection
-    kwargs.update(
-        {
-            "dst_shape": combined_meta["dst_shape"],
-            "src_transform": out_transform,
-            "dst_transform": dst_transform,
-            "num_threads": 1,
-            "src_nodata": src_nodata,
-            "dst_nodata": src_nodata,
-            "src_crs": crs,
-            "dst_crs": crs,
-            "dtype": comb_src_arr.dtype,
-            "resampling": rio.enums.Resampling.nearest  # TODO ARG
-        }
-    )
 
-    dst_arr_res = _rio_reproject(src_arr=dst_arr, reproj_kwargs=kwargs)  # type: ignore
-    print("rio", dst_arr_res)
-
-    return dst_arr_res
+    return dst_arr
 
 
 def _wrapper_multiproc_nb_valids_per_block(rst: Raster, tile_idx: NDArrayNum) -> int:
@@ -336,21 +330,17 @@ def _multiproc_apply_matrix(
             dst_crs=kwargs["src_crs"],
             src_chunks=src_chunks,
             dst_chunksizes=(mp_config.chunk_size, mp_config.chunk_size),
-            matrix=kwargs["matrix"],
-            mp_config=mp_config,
-            rst=rst,
+            matrix=kwargs["matrix"]
         )
     )
 
-    print()
     # Get location of destination blocks to write file
     dst_block_ids = np.array(dst_geotiling.get_block_locations())
 
     # Create tasks for multiprocessing
     tasks = []
-    print("Task")
+
     for i in range(len(dest2source)):
-        print(i, "/")
         tasks.append(
             mp_config.cluster.launch_task(
                 fun=_wrapper_multiproc_apply_matrix_per_block,
@@ -365,7 +355,6 @@ def _multiproc_apply_matrix(
                 kwargs=kwargs,
             )
         )
-        print()
 
     # Retrieve metadata for saving file
     file_metadata = {
@@ -389,7 +378,6 @@ def _delayed_apply_matrix_per_block(
     """
     Delayed reprojection per destination block (also rebuilds a square array combined from intersecting source blocks).
     """
-
     return _apply_matrix_per_block(*src_arrs, block_ids=block_ids, combined_meta=combined_meta, **kwargs)
 
 
@@ -418,7 +406,7 @@ def _dask_apply_matrix(
             dst_crs=kwargs["src_crs"],
             src_chunks=src_chunks,
             dst_chunksizes=dst_chunksizes,
-            matrix=kwargs["matrix"],
+            matrix=kwargs["matrix"]
         )
     )
 

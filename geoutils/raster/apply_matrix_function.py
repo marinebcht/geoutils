@@ -85,9 +85,7 @@ def _build_geotiling_and_meta_apply_matrix(
     dst_crs: CRS,
     src_chunks: tuple[tuple[int, ...], tuple[int, ...]],
     dst_chunksizes: tuple[int, int],
-    matrix,
-    mp_config,
-    rst,
+    matrix
 ) -> tuple[
     ChunkedGeoGrid,
     ChunkedGeoGrid,
@@ -127,9 +125,6 @@ def _build_geotiling_and_meta_apply_matrix(
     src_geogrid = GeoGrid(transform=src_transform, shape=src_shape, crs=src_crs)
     dst_geogrid = GeoGrid(transform=dst_transform, shape=dst_shape, crs=dst_crs)
 
-    print(src_transform, src_shape, src_crs, src_chunks)
-    print(dst_transform, dst_shape, dst_crs)
-
     # Create tilings
     src_geotiling = ChunkedGeoGrid(grid=src_geogrid, chunks=src_chunks)
     dst_chunks = _chunks2d_from_chunksizes_shape(chunksizes=dst_chunksizes, shape=dst_shape)
@@ -157,7 +152,7 @@ def _build_geotiling_and_meta_apply_matrix(
         zz = np.zeros(len(xx))
         dem = _apply_matrix_pts_arr(x=list(xx), y=list(yy), z=list(zz), invert=True, matrix=matrix)
         poly_res = Polygon(zip(dem[0], dem[1]))
-        print(k, " (z =", zz[0], "/", poly, "=>", poly_res)
+
         dst_boxes.append(poly_res)
 
     # Faster to use spatial index over source boxes
@@ -187,7 +182,6 @@ def _build_geotiling_and_meta_apply_matrix(
             matches = [id_to_idx[id(g)] for g in cand_geoms if dst.intersects(g)]
             dest2source.append(matches)
 
-    print("dest2source:", dest2source)
 
     # 3/ To reconstruct a square source array during chunked reprojection, we need to derive the combined shape and
     # transform of each tuples of source blocks
@@ -510,6 +504,8 @@ def _apply_matrix_rst(
     centroid: tuple[float, float, float] | None = None,
     resampling: Literal["nearest", "linear", "cubic", "quintic"] = "linear",
     force_regrid_method: Literal["iterative", "griddata"] | None = None,
+    resample = True,
+    out_transform = None,
 ) -> tuple[NDArrayf, rio.transform.Affine]:
     """
     Apply a 3D affine transformation matrix to a 2.5D DEM.
@@ -543,15 +539,24 @@ def _apply_matrix_rst(
     shift_only_matrix = np.diag(np.ones(4, float))
     shift_only_matrix[:3, 3] = matrix[:3, 3]
 
-    # 1/ Check if the matrix only contains a Z correction, in that case only shift the DEM values by the vertical shift
-    if np.array_equal(shift_z_only_matrix, matrix) and force_regrid_method is None:
-        return dem + matrix[2, 3], transform
+    if (np.array_equal(shift_z_only_matrix, matrix) and force_regrid_method is None) or \
+        (np.array_equal(shift_only_matrix, matrix) and force_regrid_method is None) :
+        # 1/ Check if the matrix only contains a Z correction, in that case only shift the DEM values by the vertical shift
+        if np.array_equal(shift_z_only_matrix, matrix) and force_regrid_method is None:
+            dem, transform = dem + matrix[2, 3], transform
 
-    # 2/ Check if the matrix contains only translations, in that case only shift the DEM only by translation
-    if np.array_equal(shift_only_matrix, matrix) and force_regrid_method is None:
-        new_transform = _translate(transform, xoff=matrix[0, 3], yoff=matrix[1, 3])
+        # 2/ Check if the matrix contains only translations, in that case only shift the DEM only by translation
+        if np.array_equal(shift_only_matrix, matrix) and force_regrid_method is None:
+            new_transform = _translate(transform, xoff=matrix[0, 3], yoff=matrix[1, 3])
+            dem, transform = dem + matrix[2, 3], new_transform
 
-        return dem + matrix[2, 3], new_transform
+        # Then, if resample is True, we reproject the DEM from its out_transform onto the transform
+        if resample:
+            dem = _reproject_horizontal_shift_samecrs(
+                dem, src_transform=transform, dst_transform=out_transform, resampling=resampling
+            )
+            transform = out_transform
+        return dem, transform
 
     # 3/ If matrix contains only small rotations (less than 20 degrees), use the fast iterative reprojection
     rotations = translations_rotations_from_matrix(matrix)[3:]
@@ -559,20 +564,25 @@ def _apply_matrix_rst(
         new_dem, transform = _iterate_affine_regrid_small_rotations(
             dem=dem, transform=transform, matrix=matrix, centroid=centroid, resampling=resampling
         )
-        return new_dem, transform
+    else :
+        # 4/ Otherwise, use a delauney triangulation interpolation of the transformed point cloud
+        # Convert DEM to elevation point cloud, keeping all exact grid coordinates X/Y even for NaNs
+        dem_rst = geoutils.Raster.from_array(dem, transform=transform, crs=None, nodata=99999)
+        epc = dem_rst.to_pointcloud(data_column_name="z").ds
+        trans_epc = _apply_matrix_pts(epc, matrix=matrix, centroid=centroid)
 
-    # 4/ Otherwise, use a delauney triangulation interpolation of the transformed point cloud
-    # Convert DEM to elevation point cloud, keeping all exact grid coordinates X/Y even for NaNs
-    dem_rst = geoutils.Raster.from_array(dem, transform=transform, crs=None, nodata=99999)
-    epc = dem_rst.to_pointcloud(data_column_name="z").ds
-    trans_epc = _apply_matrix_pts(epc, matrix=matrix, centroid=centroid)
+        from geoutils.interface.gridding import _grid_pointcloud
 
-    from geoutils.interface.gridding import _grid_pointcloud
+        new_dem = _grid_pointcloud(
+            trans_epc, grid_coords=dem_rst.coords(grid=False), data_column_name="z", resampling=resampling
+        )[0]
 
-    new_dem = _grid_pointcloud(
-        trans_epc, grid_coords=dem_rst.coords(grid=False), data_column_name="z", resampling=resampling
-    )[0]
-
+    # Then, if resample is True, we reproject the DEM from its out_transform onto the transform
+    if resample:
+        new_dem = _reproject_horizontal_shift_samecrs(
+            new_dem, src_transform=transform, dst_transform=out_transform, resampling=resampling
+        )
+        transform = out_transform
     return new_dem, transform
 
 
