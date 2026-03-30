@@ -170,16 +170,16 @@ def apply_matrix(
                 "centroid": centroid,
                 "resample": resample,
                 "resampling": resampling,
-                "transform": src_transform,
+                "src_transform": src_transform,
                 "src_nodata": src_nodata,
                 "src_crs": elev.crs,
             }
 
-            print ("avant apply", apply_matrix_kwargs.keys())
-
             if multiproc_config:
                 _multiproc_apply_matrix(elev, mp_config=multiproc_config, **apply_matrix_kwargs)
                 new_raster = gu.Raster(multiproc_config.outfile)
+                new_raster.set_mask(new_raster == src_nodata)
+                print (new_raster)
                 return new_raster
 
             elif da is not None and isinstance(elev.data, da.Array):
@@ -191,7 +191,7 @@ def apply_matrix(
 
 
                 return gu.raster.xr_accessor.RasterAccessor.from_array(
-                    data=dst_arr, transform=dst_transform, crs=elev.crs, nodata=np.nan, area_or_point=elev.area_or_point,
+                    data=dst_arr, transform=dst_transform, crs=elev.crs, nodata=src_nodata, area_or_point=elev.area_or_point,
                     tags=elev.tags
                 )
         else:
@@ -204,7 +204,7 @@ def apply_matrix(
 
             applied_dem, out_transform = _apply_matrix_rst(
                 dem=dem,
-                transform=src_transform,
+                src_transform=src_transform,
                 matrix=matrix,
                 invert=invert,
                 centroid=centroid,
@@ -263,12 +263,9 @@ def _apply_matrix_per_block(
     src_transform = rio.transform.Affine(*combined_meta["src_transform"])
     dst_transform = rio.transform.Affine(*combined_meta["dst_transform"])
     # Apply matrix wrapper
-    del kwargs["src_crs"] # TODO save
-    del kwargs["transform"] # TODO save
+
     kwargs["src_transform"] = src_transform
     kwargs["dst_transform"] = dst_transform
-
-    print("avant apply_rst", kwargs.keys())
 
     dst_arr, out_transform = apply_matrix(elev=comb_src_arr, **kwargs)  # type: ignore
     dst_arr = dst_arr[:combined_meta["dst_shape"][0], :combined_meta["dst_shape"][1]]
@@ -311,6 +308,7 @@ def _wrapper_multiproc_apply_matrix_per_block(
 def _multiproc_apply_matrix(
     rst: RasterType,
     mp_config: MultiprocConfig,
+    src_crs,
     **kwargs: Any,
 ) -> tuple[NDArrayf, rio.transform.Affine]:
 
@@ -323,11 +321,11 @@ def _multiproc_apply_matrix(
         _build_geotiling_and_meta_apply_matrix(
             src_count=rst.count,
             src_shape=rst.shape,
-            src_transform=kwargs["transform"],
-            src_crs=kwargs["src_crs"],
+            src_transform=kwargs["src_transform"],
+            src_crs=src_crs,
             dst_shape=rst.shape,
-            dst_transform=kwargs["transform"],
-            dst_crs=kwargs["src_crs"],
+            dst_transform=kwargs["src_transform"],
+            dst_crs=src_crs,
             src_chunks=src_chunks,
             dst_chunksizes=(mp_config.chunk_size, mp_config.chunk_size),
             matrix=kwargs["matrix"]
@@ -383,6 +381,7 @@ def _delayed_apply_matrix_per_block(
 
 def _dask_apply_matrix(
     darr: da.Array,
+    src_crs,
     **kwargs: Any,
 ) -> da.Array:
 
@@ -399,11 +398,11 @@ def _dask_apply_matrix(
         _build_geotiling_and_meta_apply_matrix(
             src_count=darr.shape[0] if darr.ndim == 3 else 1,
             src_shape=darr.shape[-2:],  # In case input is multi-band
-            src_transform=kwargs["transform"],
-            src_crs=kwargs["src_crs"],
+            src_transform=kwargs["src_transform"],
+            src_crs=src_crs,
             dst_shape=darr.shape[-2:],  # In case input is multi-band
-            dst_transform=kwargs["transform"],
-            dst_crs=kwargs["src_crs"],
+            dst_transform=kwargs["src_transform"],
+            dst_crs=src_crs,
             src_chunks=src_chunks,
             dst_chunksizes=dst_chunksizes,
             matrix=kwargs["matrix"]

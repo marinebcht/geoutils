@@ -463,9 +463,9 @@ def _reproject_per_block(
     for arr, bid in zip(src_arrs, block_ids):
         comb_src_arr[..., bid["rys"] : bid["rye"], bid["rxs"] : bid["rxe"]] = arr
 
-    print(combined_meta["dst_shape"])
-    print(combined_meta["src_transform"])
-    print(combined_meta["dst_transform"])
+    print("input:", comb_src_arr)
+    print("src_transform:", combined_meta["src_transform"])
+    print("dst_transform:", combined_meta["dst_transform"])
 
     # Now, we can simply call Rasterio!
     # We build the combined transform from tuple
@@ -656,7 +656,7 @@ def _wrapper_multiproc_reproject_per_block(
 
     # Call reproject per block
     dst_block_arr = _reproject_per_block(*src_arrs, block_ids=block_ids, combined_meta=combined_meta, **kwargs)
-    print("out", dst_block_arr)
+    print("output =", dst_block_arr)
     return dst_block_arr, (dst_block_id["ys"], dst_block_id["ye"], dst_block_id["xs"], dst_block_id["xe"])
 
 
@@ -709,11 +709,11 @@ def _multiproc_reproject(
     )
     # Get location of destination blocks to write file
     dst_block_ids = np.array(dst_geotiling.get_block_locations())
-
+    print ()
     # Create tasks for multiprocessing
     tasks = []
     for i in range(len(dest2source)):
-        print("i:", i)
+        print("block", str(i)+ ")")
         tasks.append(
             mp_config.cluster.launch_task(
                 fun=_wrapper_multiproc_reproject_per_block,
@@ -793,7 +793,7 @@ def _reproject(
     }
 
     # 4/ Check if reprojection is needed, otherwise return source raster with warning
-    if _is_reproj_needed(src_shape=source_raster.shape, reproj_kwargs=reproj_kwargs):
+    """if _is_reproj_needed(src_shape=source_raster.shape, reproj_kwargs=reproj_kwargs):
         if (nodata == src_nodata) or (nodata is None):
             if not silent:
                 warnings.warn("Output projection, bounds and grid size are identical -> returning self (not a copy!)")
@@ -805,7 +805,7 @@ def _reproject(
                     "Only nodata is different, consider using the 'set_nodata()' method instead'\
                 ' -> returning self (not a copy!)"
                 )
-            return True, None, None, None, None
+            return True, None, None, None, None"""
 
     # 5/ Perform reprojection
     reproj_kwargs.update({"num_threads": n_threads, "warp_mem_limit": memory_limit})

@@ -498,7 +498,7 @@ def _iterate_affine_regrid_small_rotations(
 
 def _apply_matrix_rst(
     dem: NDArrayf,
-    transform: rio.transform.Affine,
+    src_transform: rio.transform.Affine,
     matrix: NDArrayf,
     invert: bool = False,
     centroid: tuple[float, float, float] | None = None,
@@ -543,11 +543,11 @@ def _apply_matrix_rst(
         (np.array_equal(shift_only_matrix, matrix) and force_regrid_method is None) :
         # 1/ Check if the matrix only contains a Z correction, in that case only shift the DEM values by the vertical shift
         if np.array_equal(shift_z_only_matrix, matrix) and force_regrid_method is None:
-            dem, transform = dem + matrix[2, 3], transform
+            dem, transform = dem + matrix[2, 3], src_transform
 
         # 2/ Check if the matrix contains only translations, in that case only shift the DEM only by translation
         if np.array_equal(shift_only_matrix, matrix) and force_regrid_method is None:
-            new_transform = _translate(transform, xoff=matrix[0, 3], yoff=matrix[1, 3])
+            new_transform = _translate(src_transform, xoff=matrix[0, 3], yoff=matrix[1, 3])
             dem, transform = dem + matrix[2, 3], new_transform
 
         # Then, if resample is True, we reproject the DEM from its out_transform onto the transform
@@ -562,12 +562,12 @@ def _apply_matrix_rst(
     rotations = translations_rotations_from_matrix(matrix)[3:]
     if all(np.abs(rot) < 20 for rot in rotations) and force_regrid_method is None or force_regrid_method == "iterative":
         new_dem, transform = _iterate_affine_regrid_small_rotations(
-            dem=dem, transform=transform, matrix=matrix, centroid=centroid, resampling=resampling
+            dem=dem, transform=src_transform, matrix=matrix, centroid=centroid, resampling=resampling
         )
     else :
         # 4/ Otherwise, use a delauney triangulation interpolation of the transformed point cloud
         # Convert DEM to elevation point cloud, keeping all exact grid coordinates X/Y even for NaNs
-        dem_rst = geoutils.Raster.from_array(dem, transform=transform, crs=None, nodata=99999)
+        dem_rst = geoutils.Raster.from_array(dem, transform=src_transform, crs=None, nodata=99999)
         epc = dem_rst.to_pointcloud(data_column_name="z").ds
         trans_epc = _apply_matrix_pts(epc, matrix=matrix, centroid=centroid)
 
