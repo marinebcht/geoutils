@@ -119,13 +119,12 @@ def apply_matrix(
         transform. Otherwise, only the transform will be updated and no resampling is done.
     :param resampling: Point interpolation method, one of 'nearest', 'linear', 'cubic', or 'quintic'. For more
         information, see scipy.ndimage.map_coordinates and scipy.interpolate.interpn. Default is linear.
-    :param transform: Geotransform of the DEM, only for DEM passed as 2D array.
+    :param src_transform: Geotransform of the DEM, only for DEM passed as 2D array.
     :param z_name: Column name to use as elevation, only for point elevation data passed as geodataframe.
     :param kwargs: Keywords passed to _apply_matrix_rst for testing.
 
     :return: Affine transformed elevation point cloud or DEM.
     """
-
     mp_backend = multiproc_config is not None
     # The check below can only run on Xarray
     dask_backend = (
@@ -179,7 +178,6 @@ def apply_matrix(
                 _multiproc_apply_matrix(elev, mp_config=multiproc_config, **apply_matrix_kwargs)
                 new_raster = gu.Raster(multiproc_config.outfile)
                 new_raster.set_mask(new_raster == src_nodata)
-                print (new_raster)
                 return new_raster
 
             elif da is not None and isinstance(elev.data, da.Array):

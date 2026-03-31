@@ -556,6 +556,7 @@ def _apply_matrix_rst(
                 dem, src_transform=transform, dst_transform=out_transform, resampling=resampling
             )
             transform = out_transform
+
         return dem, transform
 
     # 3/ If matrix contains only small rotations (less than 20 degrees), use the fast iterative reprojection
