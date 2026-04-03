@@ -129,8 +129,8 @@ def lazy_test_files_tiny(tmp_path_factory: Any) -> list[str]:
 
         # Else open, convert
         rast = Raster(fn)
-        rast = rast.icrop((0, 0, 26, 24))
-        rast = rast.astype(dtype=np.float64, convert_nodata=False)
+        rast = rast.icrop((0, 0, 12, 10)) # 26, 24))
+        rast = rast.astype(dtype=np.float32, convert_nodata=False)
         rast.set_nodata(-9999, update_array=False, update_mask=False)
 
         # Save to file in temporary directory

@@ -85,7 +85,9 @@ def _build_geotiling_and_meta_apply_matrix(
     dst_crs: CRS,
     src_chunks: tuple[tuple[int, ...], tuple[int, ...]],
     dst_chunksizes: tuple[int, int],
-    matrix
+    matrix: NDArrayf,
+    centroid: tuple[float, float, float] | None = None,
+    invert: bool = False,
 ) -> tuple[
     ChunkedGeoGrid,
     ChunkedGeoGrid,
@@ -141,18 +143,16 @@ def _build_geotiling_and_meta_apply_matrix(
         arr = rst_block.data
         return arr.min(), arr.max()
 
-    src_block_ids = src_geotiling.get_block_locations()
-
     dst_boxes = []
     for k, gg in enumerate(dst_geotiling.get_blocks_as_geogrids()):
-        poly = box(*gg.bounds_projected(crs=dst_crs)).buffer(2 * max(dst_geogrid.res))
+        poly = box(*gg.bounds_projected(crs=dst_crs)).buffer(5 * max(dst_geogrid.res))
         xx, yy = poly.exterior.coords.xy
         # zz_min, zz_max = mp_config.cluster.launch_task(fun=_wrapper_multiproc_nb_valids_per_block, args=[rst, src_block_ids[k]], kwargs={})
         # zz = np.ones(len(xx)) * (zz_max - zz_min)
         zz = np.zeros(len(xx))
-        dem = _apply_matrix_pts_arr(x=list(xx), y=list(yy), z=list(zz), invert=True, matrix=matrix)
-        poly_res = Polygon(zip(dem[0], dem[1]))
 
+        dem = _apply_matrix_pts_arr(x=list(xx), y=list(yy), z=list(zz), invert=not invert, matrix=matrix, centroid=centroid)
+        poly_res = Polygon(zip(dem[0], dem[1]))
         dst_boxes.append(poly_res)
 
     # Faster to use spatial index over source boxes
@@ -182,6 +182,7 @@ def _build_geotiling_and_meta_apply_matrix(
             matches = [id_to_idx[id(g)] for g in cand_geoms if dst.intersects(g)]
             dest2source.append(matches)
 
+    print ("dest2source", dest2source)
 
     # 3/ To reconstruct a square source array during chunked reprojection, we need to derive the combined shape and
     # transform of each tuples of source blocks
@@ -379,11 +380,12 @@ def _iterate_affine_regrid_small_rotations(
     # Convert DEM to elevation point cloud, keeping all exact grid coordinates X/Y even for NaNs
     dem_rst = geoutils.Raster.from_array(dem, transform=transform, crs=None, nodata=99999)
     epc = dem_rst.to_pointcloud(data_column_name="z", skip_nodata=False).ds
-
     # Exact affine transform of elevation point cloud (which yields irregular coordinates in 2D)
     tz0 = _apply_matrix_pts_arr(
         x=epc.geometry.x.values, y=epc.geometry.y.values, z=epc.z.values, matrix=matrix, centroid=centroid
     )[2]
+
+
 
     # We need to find the elevation Z of a transformed DEM at the exact grid coordinates X,Y
     # Which means we need to find coordinates X',Y',Z' of the original DEM that, after the exact affine transform,
@@ -392,8 +394,14 @@ def _iterate_affine_regrid_small_rotations(
     # 1/ The elevation of the original DEM, Z', is simply a 2D interpolator function of X',Y' (bilinear, typically)
     # (We create the interpolator only once here for computational speed, instead of using Raster.interp_points)
     xycoords = dem_rst.coords(grid=False)
+    """print ("RegularGridInterpolator in", dem[-1], type(dem), type(dem[-1]), dem[-1][-1], type(dem[-1][-1]))
+    print ((np.flip(xycoords[1], axis=0), xycoords[0]))
+    print (dem)
+    print (resampling)"""
     z_interp = scipy.interpolate.RegularGridInterpolator(
-        points=(np.flip(xycoords[1], axis=0), xycoords[0]), values=dem, method=resampling, bounds_error=False
+        points=(np.flip(xycoords[1], axis=0), xycoords[0]),
+        values=dem, method=resampling,
+        bounds_error=False, fill_value=np.nan,
     )
 
     # 2/ As a first guess of a transformed DEM elevation Z near the grid coordinates, we initialize with the elevations
@@ -418,7 +426,9 @@ def _iterate_affine_regrid_small_rotations(
 
     # Start with full array of X/Y regular coordinates (subset during iterations to improve computational efficiency)
     x = epc.geometry.x.values
+    #print ("x", x[:3], x[-3:])
     y = epc.geometry.y.values
+    #print ("y", y[:3], y[-3:])
 
     # Initialize output z array, and array to store points that have converged
     zfinal = np.ones(len(x), dtype=dem.dtype)
@@ -436,12 +446,16 @@ def _iterate_affine_regrid_small_rotations(
 
         # Invert X,Y (exact grid coordinates) with Z guess to find X',Y' coordinates on original DEM
         tx, ty = _apply_matrix_pts_arr(x=x, y=y, z=new_z, matrix=matrix, invert=True, centroid=centroid)[:2]
-
         # Interpolate original DEM at X', Y' to get Z', and convert to point cloud
+        """print (niter, ")")
+        print("tx", tx[:3], tx[-3:])
+        print("ty", ty[:3], ty[-3:])"""
+
         tz = z_interp((ty, tx))
 
         # Transform to see if we fall back on our feet (on the regular grid), or if we need to iterate more
         x0, y0, z0 = _apply_matrix_pts_arr(x=tx, y=ty, z=tz, matrix=matrix, centroid=centroid)
+        #print ("tx[0], tz[0], x0[0]:", tx[0], tz[0], x0[0])
 
         # Only check residuals after first iteration (to remove NaNs) then every 5 iterations to reduce computing time
         if niter == 1 or niter == niter_check:
@@ -486,13 +500,18 @@ def _iterate_affine_regrid_small_rotations(
         # If another iteration is required, update Z guess and increment
         new_z = z0
         niter += 1
-
+    #print (niter, ")")
     # 4/ Write the regular-grid point cloud back into a raster
     epc.z = zfinal  # We just replace the Z of the original grid to ensure exact coordinates
     transformed_dem = dem_rst.from_pointcloud_regular(
         epc, transform=transform, shape=dem.shape, data_column_name="z", nodata=-99999
     )
+    #print ("transformed_dem[0][0]", transformed_dem[0][0])
 
+    new_dem = transformed_dem.data.filled(np.nan)
+    """print("fin", type(new_dem), type(new_dem), type(new_dem[0][0]), new_dem[0])
+    print ("[fin _iterate_affine_regrid_small_rotations] \n")
+    """
     return transformed_dem.data.filled(np.nan), transform
 
 
@@ -548,6 +567,7 @@ def _apply_matrix_rst(
         # 2/ Check if the matrix contains only translations, in that case only shift the DEM only by translation
         if np.array_equal(shift_only_matrix, matrix) and force_regrid_method is None:
             new_transform = _translate(src_transform, xoff=matrix[0, 3], yoff=matrix[1, 3])
+            print("new_transform", src_transform, new_transform)
             dem, transform = dem + matrix[2, 3], new_transform
 
         # Then, if resample is True, we reproject the DEM from its out_transform onto the transform
@@ -562,21 +582,24 @@ def _apply_matrix_rst(
     # 3/ If matrix contains only small rotations (less than 20 degrees), use the fast iterative reprojection
     rotations = translations_rotations_from_matrix(matrix)[3:]
     if all(np.abs(rot) < 20 for rot in rotations) and force_regrid_method is None or force_regrid_method == "iterative":
+        if isinstance(dem, np.ma.MaskedArray):
+            dem = np.array(dem)
         new_dem, transform = _iterate_affine_regrid_small_rotations(
             dem=dem, transform=src_transform, matrix=matrix, centroid=centroid, resampling=resampling
         )
+        print ()
     else :
         # 4/ Otherwise, use a delauney triangulation interpolation of the transformed point cloud
         # Convert DEM to elevation point cloud, keeping all exact grid coordinates X/Y even for NaNs
         dem_rst = geoutils.Raster.from_array(dem, transform=src_transform, crs=None, nodata=99999)
         epc = dem_rst.to_pointcloud(data_column_name="z").ds
         trans_epc = _apply_matrix_pts(epc, matrix=matrix, centroid=centroid)
-
         from geoutils.interface.gridding import _grid_pointcloud
 
         new_dem = _grid_pointcloud(
             trans_epc, grid_coords=dem_rst.coords(grid=False), data_column_name="z", resampling=resampling
         )[0]
+
 
     # Then, if resample is True, we reproject the DEM from its out_transform onto the transform
     if resample:
@@ -739,139 +762,6 @@ def _matrix_to_euler(rotation_matrix: NDArrayf, atol: float = 10e-8) -> tuple[fl
     return float(alpha), float(beta), float(gamma)
 
 
-def _iterate_affine_regrid_small_rotations(
-    dem: NDArrayf,
-    transform: rio.transform.Affine,
-    matrix: NDArrayf,
-    centroid: tuple[float, float, float] | None = None,
-    resampling: Literal["nearest", "linear", "cubic", "quintic"] = "linear",
-) -> tuple[NDArrayf, rio.transform.Affine]:
-    """
-    Iterative process to find the best reprojection of affine transformation for small rotations.
-
-    Faster than regridding point cloud by triangulation of points (for instance with scipy.interpolate.griddata).
-    """
-
-    # Convert DEM to elevation point cloud, keeping all exact grid coordinates X/Y even for NaNs
-    dem_rst = geoutils.Raster.from_array(dem, transform=transform, crs=None, nodata=99999)
-    epc = dem_rst.to_pointcloud(data_column_name="z", skip_nodata=False).ds
-
-    # Exact affine transform of elevation point cloud (which yields irregular coordinates in 2D)
-    tz0 = _apply_matrix_pts_arr(
-        x=epc.geometry.x.values, y=epc.geometry.y.values, z=epc.z.values, matrix=matrix, centroid=centroid
-    )[2]
-
-    # We need to find the elevation Z of a transformed DEM at the exact grid coordinates X,Y
-    # Which means we need to find coordinates X',Y',Z' of the original DEM that, after the exact affine transform,
-    # fall exactly on regular X,Y coordinates
-
-    # 1/ The elevation of the original DEM, Z', is simply a 2D interpolator function of X',Y' (bilinear, typically)
-    # (We create the interpolator only once here for computational speed, instead of using Raster.interp_points)
-    xycoords = dem_rst.coords(grid=False)
-    z_interp = scipy.interpolate.RegularGridInterpolator(
-        points=(np.flip(xycoords[1], axis=0), xycoords[0]), values=dem, method=resampling, bounds_error=False
-    )
-
-    # 2/ As a first guess of a transformed DEM elevation Z near the grid coordinates, we initialize with the elevations
-    # of the nearest point from the transformed elevation point cloud
-
-    # OLD METHOD
-    # (Longest step computationally)
-    # with warnings.catch_warnings():
-    #     warnings.filterwarnings("ignore", category=UserWarning, message="Geometry is in a geographic CRS.*")
-    #     nearest = gpd.sjoin_nearest(epc, trans_epc)
-    #
-    # # In case several points are found at exactly the same distance, take the mean of their elevations
-    # new_z = nearest.groupby(by=nearest.index)["z_left"].mean().values
-
-    # NEW METHOD: Use the transformed elevation instead of searching for a nearest neighbour,
-    # is close enough for small rotations! (and only creates a couple more iterations instead of a full search)
-    new_z = tz0
-
-    # 3/ We then iterate between two steps until convergence:
-    # a/ Use the Z guess to derive invert affine transform X',Y' coordinates for the original DEM,
-    # b/ Interpolate Z' at new coordinates X',Y' on the original DEM, and apply affine transform to get updated Z guess
-
-    # Start with full array of X/Y regular coordinates (subset during iterations to improve computational efficiency)
-    x = epc.geometry.x.values
-    y = epc.geometry.y.values
-
-    # Initialize output z array, and array to store points that have converged
-    zfinal = np.ones(len(x), dtype=dem.dtype)
-    ind_converged = np.zeros(len(x), dtype=bool)
-
-    # For small rotations, and large DEMs (elevation range smaller than the DEM extent), this converges fast
-    max_niter = 20  # Maximum iteration number
-    niter_check = 5  # Number of iterations between residual checks
-    tolerance = 10 ** (-4)  # Tolerance in X/Y relative to resolution of X/Y
-    res_x = dem_rst.res[0]  # Resolution in X
-    res_y = dem_rst.res[1]  # Resolution in Y
-    niter = 1  # Starting iteration
-
-    while niter < max_niter:
-
-        # Invert X,Y (exact grid coordinates) with Z guess to find X',Y' coordinates on original DEM
-        tx, ty = _apply_matrix_pts_arr(x=x, y=y, z=new_z, matrix=matrix, invert=True, centroid=centroid)[:2]
-
-        # Interpolate original DEM at X', Y' to get Z', and convert to point cloud
-        tz = z_interp((ty, tx))
-
-        # Transform to see if we fall back on our feet (on the regular grid), or if we need to iterate more
-        x0, y0, z0 = _apply_matrix_pts_arr(x=tx, y=ty, z=tz, matrix=matrix, centroid=centroid)
-
-        # Only check residuals after first iteration (to remove NaNs) then every 5 iterations to reduce computing time
-        if niter == 1 or niter == niter_check:
-
-            # Compute difference between exact grid coordinates and current coordinates, and stop if tolerance reached
-            diff_x = x0 - x
-            diff_y = y0 - y
-
-            logging.debug(
-                "Residual check at iteration number %d:" "\n    Mean diff x: %f" "\n    Mean diff y: %f",
-                niter,
-                np.nanmean(np.abs(diff_x)),
-                np.nanmean(np.abs(diff_y)),
-            )
-
-            # Get index of points below tolerance in both X/Y for this subsample (all points before convergence update)
-            # Nodata values are considered having converged
-            subind_diff_x = np.logical_or(np.abs(diff_x) < (tolerance * res_x), ~np.isfinite(diff_x))
-            subind_diff_y = np.logical_or(np.abs(diff_y) < (tolerance * res_y), ~np.isfinite(diff_y))
-            subind_converged = np.logical_and(subind_diff_x, subind_diff_y)
-
-            logging.debug(
-                "    Points not within tolerance: %d for X; %d for Y",
-                np.count_nonzero(~subind_diff_x),
-                np.count_nonzero(~subind_diff_y),
-            )
-
-            # If all points left are below convergence, update Z one final time and stop here
-            if all(subind_converged):
-                zfinal[~ind_converged] = z0
-                break
-            # Otherwise, save Z for new converged points and keep only not converged in next iterations (for speed)
-            else:
-                zfinal[~ind_converged] = z0
-                x = x[~subind_converged]
-                y = y[~subind_converged]
-                z0 = z0[~subind_converged]
-
-            # Otherwise, for this check, update convergence status for points not having converged yet
-            ind_converged[~ind_converged] = subind_converged
-
-        # If another iteration is required, update Z guess and increment
-        new_z = z0
-        niter += 1
-
-    # 4/ Write the regular-grid point cloud back into a raster
-    epc.z = zfinal  # We just replace the Z of the original grid to ensure exact coordinates
-    transformed_dem = dem_rst.from_pointcloud_regular(
-        epc, transform=transform, shape=dem.shape, data_column_name="z", nodata=-99999
-    )
-
-    return transformed_dem.data.filled(np.nan), transform
-
-
 def invert_matrix(matrix: NDArrayf, atol: float = 10e-8) -> NDArrayf:
     """
     Invert a transformation matrix.
@@ -943,13 +833,16 @@ def _apply_matrix_pts_arr(
     if invert:
         matrix = invert_matrix(matrix)
 
+
     # First, get 4xN array, adding a column of ones for translations during matrix multiplication
     points = np.vstack([x, y, z, np.ones(len(x))])
-
+    """if z[0] != 0:
+        print ("_apply_matrix_pts_arr z", z[:3], z[-3:])
+        print("_apply_matrix_pts_arr last point ", points.T[-1])
+    """
     # Temporarily subtract centroid coordinates
     if centroid is not None:
         points[:3, :] -= np.array(centroid)[:, None]
-
     # Transform using matrix multiplication, and get only the first three columns
     transformed_points = (matrix @ points)[:3, :]
 
@@ -990,6 +883,7 @@ def _apply_matrix_pts(
         invert=invert,
     )
 
+    import geopandas as gpd
     # Finally, transform back to a new GeoDataFrame
     transformed_epc = gpd.GeoDataFrame(
         geometry=gpd.points_from_xy(x=tx, y=ty, crs=epc.crs),

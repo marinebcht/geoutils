@@ -21,9 +21,13 @@ from geoutils.raster.apply_matrix_function import (
     _reproject_horizontal_shift_samecrs,
     _apply_matrix_rst,
     _build_geotiling_and_meta_apply_matrix,
+    _apply_matrix_pts,
+    _apply_matrix_pts_arr
 )
 
+import geopandas as gpd
 from geoutils.raster.transformation import _rio_reproject
+from geoutils._dispatch import _check_match_bbox, _check_match_grid
 
 from geoutils._misc import import_optional, silence_rasterio_message
 
@@ -136,6 +140,7 @@ def apply_matrix(
             "Cannot use Multiprocessing and Dask simultaneously. To use Dask, remove mp_config parameter "
             "from reproject(). To use Multiprocessing, open the file without chunks."
         )
+
     # Apply matrix to elevation point cloud
     if isinstance(elev, gpd.GeoDataFrame):
         return _apply_matrix_pts(epc=elev, matrix=matrix, invert=invert, centroid=centroid, z_name=z_name)
@@ -145,11 +150,19 @@ def apply_matrix(
         if isinstance(elev, gu.Raster):
             src_transform = elev.transform
             dem = elev.data.filled(np.nan)
+            print(elev.transform)
+            # dem.dem[elev.data==elev.nodata] = np.nan
+            dem = elev.data.filled(np.nan)
+            # dem = elev.data
+
         elif isinstance(elev, gu.raster.xr_accessor.RasterAccessor):
             src_transform = elev.transform
-            # dem = elev.data.filled(np.nan)
+            dem = elev.data
         else:
             dem = elev
+            dem[dem == -9999.0] = np.nan
+
+
 
         # If using Multiprocessing backend, process and return None (files written on disk)
         if mp_backend or dask_backend:
@@ -174,6 +187,49 @@ def apply_matrix(
                 "src_crs": elev.crs,
             }
 
+            from geoutils.raster.transformation import _translate
+
+            if resample:
+                apply_matrix_kwargs["dst_transform"] = src_transform
+            else:
+                if invert:
+                    from geoutils.raster.apply_matrix_function import invert_matrix
+                    matrix_ = invert_matrix(matrix)
+                else:
+                    matrix_ = matrix
+                apply_matrix_kwargs["dst_transform"] = _translate(src_transform, xoff=matrix_[0, 3], yoff=matrix_[1, 3])
+            print (apply_matrix_kwargs["src_transform"])
+            print (apply_matrix_kwargs["dst_transform"])
+            """
+            bb = elev.get_bounds_projected(elev.crs)
+            print (bb)
+            from shapely.geometry import Polygon, box
+
+            poly = box(*elev.get_bounds_projected(elev.crs))
+
+            xx, yy = poly.exterior.coords.xy
+            # zz_min, zz_max = mp_config.cluster.launch_task(fun=_wrapper_multiproc_nb_valids_per_block, args=[rst, src_block_ids[k]], kwargs={})
+            # zz = np.ones(len(xx)) * (zz_max - zz_min)
+            zz = np.zeros(len(xx))
+
+            dem_res = _apply_matrix_pts_arr(x=list(xx), y=list(yy), z=list(zz), invert=not invert, matrix=matrix,
+                                        centroid=centroid)
+            print ("dem0", dem[0])
+            print ("dem1", dem[1])
+            bb_res = (min(dem_res[0]), min(dem_res[1]), max(dem_res[0]), max(dem_res[1]))
+            print (bb_res)
+            print (_check_match_bbox(elev, bb_res))
+
+            # 1/ Check and normalize match-grid inputs
+            dst_shape, dst_transform, dst_crs = _check_match_grid(
+                src=elev, ref=None, res=elev.res, shape=elev.shape, bounds=bb_res, crs=elev.crs, coords=None
+            )
+            print ( dst_shape, dst_transform, dst_crs )"""
+            """base_am.transform[30.0, 0.0, 489340.0, 0.0, -30.0, 3098570.0, 0.0, 0.0, 1.0]
+            Affine(30.429320932545426, 0.0, 489338.2312926396,
+                   0.0, -31.7241164885927, 3098580.459372429))"""
+
+
             if multiproc_config:
                 _multiproc_apply_matrix(elev, mp_config=multiproc_config, **apply_matrix_kwargs)
                 new_raster = gu.Raster(multiproc_config.outfile)
@@ -183,13 +239,9 @@ def apply_matrix(
             elif da is not None and isinstance(elev.data, da.Array):
                 dst_arr = _dask_apply_matrix(darr=elev.data, **apply_matrix_kwargs)
 
-                if dst_transform is None:
-                    if resample == True:
-                        dst_transform = src_transform
-
-
                 return gu.raster.xr_accessor.RasterAccessor.from_array(
-                    data=dst_arr, transform=dst_transform, crs=elev.crs, nodata=src_nodata, area_or_point=elev.area_or_point,
+                    data=dst_arr, transform=apply_matrix_kwargs["dst_transform"], crs=elev.crs, nodata=src_nodata,
+                    area_or_point=elev.area_or_point,
                     tags=elev.tags
                 )
         else:
@@ -211,13 +263,13 @@ def apply_matrix(
                 out_transform=dst_transform,
                 **kwargs,
             )
-
-
+            print (src_transform, out_transform)
 
             # We return a raster if input was a raster
             if isinstance(elev, gu.Raster):
                 applied_dem = gu.Raster.from_array(applied_dem, out_transform, elev.crs, elev.nodata)
                 return applied_dem
+
             return applied_dem, out_transform
 
 
@@ -264,9 +316,15 @@ def _apply_matrix_per_block(
 
     kwargs["src_transform"] = src_transform
     kwargs["dst_transform"] = dst_transform
+    kwargs["resample"] = True
 
     dst_arr, out_transform = apply_matrix(elev=comb_src_arr, **kwargs)  # type: ignore
     dst_arr = dst_arr[:combined_meta["dst_shape"][0], :combined_meta["dst_shape"][1]]
+
+    """print ("in:", comb_src_arr)
+    print ("apply_matrix out_transform", list(out_transform))
+    print ("shape out:", combined_meta["dst_shape"])
+    print ("out:", dst_arr)"""
 
 
     return dst_arr
@@ -322,13 +380,15 @@ def _multiproc_apply_matrix(
             src_transform=kwargs["src_transform"],
             src_crs=src_crs,
             dst_shape=rst.shape,
-            dst_transform=kwargs["src_transform"],
+            dst_transform=kwargs["dst_transform"],
             dst_crs=src_crs,
             src_chunks=src_chunks,
             dst_chunksizes=(mp_config.chunk_size, mp_config.chunk_size),
-            matrix=kwargs["matrix"]
+            matrix=kwargs["matrix"],
+            centroid=kwargs["centroid"]
         )
     )
+
 
     # Get location of destination blocks to write file
     dst_block_ids = np.array(dst_geotiling.get_block_locations())
@@ -336,7 +396,10 @@ def _multiproc_apply_matrix(
     # Create tasks for multiprocessing
     tasks = []
 
+    print ()
+
     for i in range(len(dest2source)):
+        print ("task", i, ")")
         tasks.append(
             mp_config.cluster.launch_task(
                 fun=_wrapper_multiproc_apply_matrix_per_block,
@@ -358,7 +421,7 @@ def _multiproc_apply_matrix(
         "height": rst.shape[0],
         "count": rst.count,
         "crs": rst.crs,
-        "transform": rst.transform,
+        "transform": kwargs["dst_transform"],
         "dtype": rst.dtype,
         "nodata": rst.nodata,
     }
@@ -399,11 +462,13 @@ def _dask_apply_matrix(
             src_transform=kwargs["src_transform"],
             src_crs=src_crs,
             dst_shape=darr.shape[-2:],  # In case input is multi-band
-            dst_transform=kwargs["src_transform"],
+            dst_transform=kwargs["dst_transform"],
             dst_crs=src_crs,
             src_chunks=src_chunks,
             dst_chunksizes=dst_chunksizes,
-            matrix=kwargs["matrix"]
+            matrix=kwargs["matrix"],
+            centroid=kwargs["centroid"],
+            invert=kwargs["invert"]
         )
     )
 
@@ -458,6 +523,7 @@ def _dask_apply_matrix(
 
     # Run the delayed reprojection, looping for each destination block-band (2D block and 1D band-chunk)
     list_reproj_da = [_dst_block_as_da(i) for i in range(len(dest2source))]
+
     # Array comes out as flat blocks x chunksize0 (varying) x chunksize1 (varying), so we can't reshape directly
     # We need to unravel the flattened blocks indices to align X/Y, then concatenate all columns, then rows
     ny_dst, nx_dst = len(dst_chunks[0]), len(dst_chunks[1])
@@ -469,4 +535,5 @@ def _dask_apply_matrix(
         for r in range(ny_dst)
     ]
     concat_all = da.concatenate(rows, axis=ax_y)
+
     return concat_all
