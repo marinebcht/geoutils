@@ -54,13 +54,13 @@ def _euler_to_matrix(alpha1: float, alpha2: float, alpha3: float):
 
 
 def matrix_from_translations_rotations(
-        t1: float = 0.0,
-        t2: float = 0.0,
-        t3: float = 0.0,
-        alpha1: float = 0.0,
-        alpha2: float = 0.0,
-        alpha3: float = 0.0,
-        use_degrees: bool = True,
+    t1: float = 0.0,
+    t2: float = 0.0,
+    t3: float = 0.0,
+    alpha1: float = 0.0,
+    alpha2: float = 0.0,
+    alpha3: float = 0.0,
+    use_degrees: bool = True,
 ):
     """
     Build rigid affine matrix based on 3 translations (unit of coordinates) and 3 rotations (degrees or radians).
@@ -127,25 +127,27 @@ class TestApplyMatrixManipulation:
     trans_y = 1
     trans_z = 1.5
     # This is a 3x3 rotation matrix
-    matrix_all = matrix_from_translations_rotations(
-        trans_x, trans_y, trans_z, rotation_x, rotation_y, rotation_z
-    )
+    matrix_all = matrix_from_translations_rotations(trans_x, trans_y, trans_z, rotation_x, rotation_y, rotation_z)
 
-    list_matrices = [matrix_identity , matrix_vertical, matrix_translations, matrix_rotations, matrix_all]
+    list_matrices = [matrix_identity, matrix_vertical, matrix_translations, matrix_rotations, matrix_all]
 
-    @pytest.mark.parametrize("path_index", [0]) # todo ?
+    @pytest.mark.parametrize("path_index", [0])  # todo ?
     @pytest.mark.parametrize("matrix", list_matrices)
     @pytest.mark.parametrize("chunk_size", [5, 8, 20])
     @pytest.mark.parametrize("invert", [False, True])
     @pytest.mark.parametrize("resampling", [None, "nearest", "linear", "cubic", "quintic"])
-
-
-
-    def test_apply_matrix_dask_multi(self, matrix, path_index,
-                                     chunk_size: int, invert: bool, resampling: str, tmp_path: Path,
-                                     lazy_test_files_tiny: list[str]
-                                     ) -> None:
+    def test_apply_matrix_dask_multi(
+        self,
+        matrix,
+        path_index,
+        chunk_size: int,
+        invert: bool,
+        resampling: str,
+        tmp_path: Path,
+        lazy_test_files_tiny: list[str],
+    ) -> None:
         import dask.array as da
+
         # Base raster input (in-memory)
         """dem_arr = np.linspace(0, 99, 100).reshape(10, 10)
         transform = rio.transform.from_origin(0, 5, 1, 1)
@@ -189,14 +191,20 @@ class TestApplyMatrixManipulation:
 
         # Run apply_matrix for each backend
         print("BASE")
-        base_am = gu.raster.apply_matrix_module.apply_matrix(raster_base, matrix, invert=invert,
-                                                             centroid=centroid, resample=resample,
-                                                             resampling=resampling)
+        base_am = gu.raster.apply_matrix_module.apply_matrix(
+            raster_base, matrix, invert=invert, centroid=centroid, resample=resample, resampling=resampling
+        )
 
         print("\nMULTI")
-        mp_am = gu.raster.apply_matrix_module.apply_matrix(raster_base, matrix, invert=invert,
-                                                           centroid=centroid, resample=resample, resampling=resampling,
-                                                           multiproc_config=multiproc_config)
+        mp_am = gu.raster.apply_matrix_module.apply_matrix(
+            raster_base,
+            matrix,
+            invert=invert,
+            centroid=centroid,
+            resample=resample,
+            resampling=resampling,
+            multiproc_config=multiproc_config,
+        )
 
         # 4/ Laziness checks
         assert not ds_dask._in_memory
@@ -208,10 +216,10 @@ class TestApplyMatrixManipulation:
         # Multi
         assert isinstance(mp_am, gu.Raster)
         assert mp_am.nodata == base_am.nodata
-        #assert mp_am.dtype == type(matrix[0,0])
+        # assert mp_am.dtype == type(matrix[0,0])
         assert mp_am.crs == base_am.crs
-        print (" mp_am.transform", mp_am.transform)
-        print (" base_am.transform", base_am.transform)
+        print(" mp_am.transform", mp_am.transform)
+        print(" base_am.transform", base_am.transform)
         assert mp_am.transform == base_am.transform
         assert np.all(mp_am.get_mask() == base_am.get_mask())
 
@@ -219,7 +227,6 @@ class TestApplyMatrixManipulation:
             diff = 10e-5
         else:
             diff = 10e-2
-
 
         from geoutils.raster.apply_matrix_function import _iterate_affine_regrid_small_rotations
 
@@ -234,10 +241,9 @@ class TestApplyMatrixManipulation:
         # Dask
         print("\nDASK")
 
-        dask_am = gu.raster.apply_matrix_module.apply_matrix(ds_dask.rst, matrix, invert=invert,
-                                                             centroid=centroid, resample=resample,
-                                                             resampling=resampling)
-
+        dask_am = gu.raster.apply_matrix_module.apply_matrix(
+            ds_dask.rst, matrix, invert=invert, centroid=centroid, resample=resample, resampling=resampling
+        )
 
         assert not dask_am._in_memory
         dask_am = dask_am.compute()
@@ -245,11 +251,12 @@ class TestApplyMatrixManipulation:
         assert dask_am.rst.nodata == base_am.nodata
         assert dask_am.rst.dtype == base_am.dtype
         assert dask_am.rst.crs == base_am.crs
-        print (" base_am.transform", list(base_am.transform))
-        print (" dask_am.rst.transform", list(dask_am.rst.transform))
+        print(" base_am.transform", list(base_am.transform))
+        print(" dask_am.rst.transform", list(dask_am.rst.transform))
         assert dask_am.rst.transform == base_am.transform
         assert np.all(np.isnan(dask_am.rst.data[base_am.get_mask()]))
         assert np.all(np.array(base_am.data - dask_am.rst.data)[base_am.get_mask() == False] < diff)
+
 
 def test__rio_reproject():
     dst_arr_after_apply_matrix = np.linspace(0, 99, 100).reshape(10, 10)
@@ -261,17 +268,19 @@ def test__rio_reproject():
 
     def run(array, src_transform, dst_transform):
         kwargs = {
-            'dst_shape': (5, 5),
-            'src_transform': src_transform,
-            'dst_transform': dst_transform,
+            "dst_shape": (5, 5),
+            "src_transform": src_transform,
+            "dst_transform": dst_transform,
             "dtype": np.float64,
             "num_threads": 1,
-            'src_nodata': 200,
-            'dst_nodata': 200,
-            'src_crs': CRS.from_epsg(4326), 'dst_crs': CRS.from_epsg(4326)}
+            "src_nodata": 200,
+            "dst_nodata": 200,
+            "src_crs": CRS.from_epsg(4326),
+            "dst_crs": CRS.from_epsg(4326),
+        }
 
         dst_arr_res = _rio_reproject(src_arr=array, reproj_kwargs=kwargs)  # type: ignore
-        return (dst_arr_res)
+        return dst_arr_res
 
     # upper left
     src_transform = Affine(1.0, 0.0, np.float64(0.0), 0.0, -1.0, np.float64(5.0))
@@ -293,46 +302,47 @@ def test__rio_reproject():
     dst_transform = Affine(1.0, 0.0, 5.0, 0.0, -1.0, 0.0)
     print(run(dst_arr_after_apply_matrix, src_transform, dst_transform))
 
-
-
     print(l)
 
 
-
 def test_repro():
-    src_arrs = np.linspace(0, 99, 100).reshape(10,10)
+    src_arrs = np.linspace(0, 99, 100).reshape(10, 10)
     transform = rio.transform.from_origin(0, 5, 1, 1)
     chunk_size = 4
     dem = gu.Raster.from_array(src_arrs, transform=transform, crs=4326, nodata=200)
 
     # Test Normal
-    dem_reproj = dem.reproject(res=(1,1)) #, mp_config=multiproc_config)
-    print ("Res normal: \n", dem_reproj.data)
+    dem_reproj = dem.reproject(res=(1, 1))  # , mp_config=multiproc_config)
+    print("Res normal: \n", dem_reproj.data)
 
     # Test Multi
-    multiproc_config=MultiprocConfig(chunk_size=chunk_size,  outfile="tmp/test.tif")
-    dem_reproj = dem.reproject(res=(1,1), mp_config=multiproc_config)
-    print ("Res Multiprocess: \n", dem_reproj.data)
+    multiproc_config = MultiprocConfig(chunk_size=chunk_size, outfile="tmp/test.tif")
+    dem_reproj = dem.reproject(res=(1, 1), mp_config=multiproc_config)
+    print("Res Multiprocess: \n", dem_reproj.data)
 
     # Test Dask
     ds = open_raster("input.tif", chunks={"band": 1, "x": chunk_size, "y": chunk_size})
     print(ds.rst.get_stats())
     ds.rst.data.set_mask(src_arrs > 0)
 
-    dem_reproj = ds.rst.reproject(res=(1,1))
+    dem_reproj = ds.rst.reproject(res=(1, 1))
     dem_reproj = dem_reproj.compute()
-    print ("Res Dask: \n", dem_reproj.rst.data)
+    print("Res Dask: \n", dem_reproj.rst.data)
 
-    print (l)
+    print(l)
+
 
 def test__regulargrid():
 
     import scipy
-    points = (([3098570., 3098540., 3098510., 3098480.]), ([489340., 489370., 489400., 489430.]))
-    dem = [[251., 255., 251., 255.],
-           [249., 253., 251., 255.],
-           [244., 234., 251., 255.],
-           [235., 227., 283., np.nan]]
+
+    points = (([3098570.0, 3098540.0, 3098510.0, 3098480.0]), ([489340.0, 489370.0, 489400.0, 489430.0]))
+    dem = [
+        [251.0, 255.0, 251.0, 255.0],
+        [249.0, 253.0, 251.0, 255.0],
+        [244.0, 234.0, 251.0, 255.0],
+        [235.0, 227.0, 283.0, np.nan],
+    ]
     resampling = "cubic"
 
     z_interp = scipy.interpolate.RegularGridInterpolator(

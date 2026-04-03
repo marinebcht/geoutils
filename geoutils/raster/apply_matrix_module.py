@@ -22,7 +22,7 @@ from geoutils.raster.apply_matrix_function import (
     _apply_matrix_rst,
     _build_geotiling_and_meta_apply_matrix,
     _apply_matrix_pts,
-    _apply_matrix_pts_arr
+    _apply_matrix_pts_arr,
 )
 
 import geopandas as gpd
@@ -162,8 +162,6 @@ def apply_matrix(
             dem = elev
             dem[dem == -9999.0] = np.nan
 
-
-
         # If using Multiprocessing backend, process and return None (files written on disk)
         if mp_backend or dask_backend:
 
@@ -194,12 +192,13 @@ def apply_matrix(
             else:
                 if invert:
                     from geoutils.raster.apply_matrix_function import invert_matrix
+
                     matrix_ = invert_matrix(matrix)
                 else:
                     matrix_ = matrix
                 apply_matrix_kwargs["dst_transform"] = _translate(src_transform, xoff=matrix_[0, 3], yoff=matrix_[1, 3])
-            print (apply_matrix_kwargs["src_transform"])
-            print (apply_matrix_kwargs["dst_transform"])
+            print(apply_matrix_kwargs["src_transform"])
+            print(apply_matrix_kwargs["dst_transform"])
             """
             bb = elev.get_bounds_projected(elev.crs)
             print (bb)
@@ -229,7 +228,6 @@ def apply_matrix(
             Affine(30.429320932545426, 0.0, 489338.2312926396,
                    0.0, -31.7241164885927, 3098580.459372429))"""
 
-
             if multiproc_config:
                 _multiproc_apply_matrix(elev, mp_config=multiproc_config, **apply_matrix_kwargs)
                 new_raster = gu.Raster(multiproc_config.outfile)
@@ -240,9 +238,12 @@ def apply_matrix(
                 dst_arr = _dask_apply_matrix(darr=elev.data, **apply_matrix_kwargs)
 
                 return gu.raster.xr_accessor.RasterAccessor.from_array(
-                    data=dst_arr, transform=apply_matrix_kwargs["dst_transform"], crs=elev.crs, nodata=src_nodata,
+                    data=dst_arr,
+                    transform=apply_matrix_kwargs["dst_transform"],
+                    crs=elev.crs,
+                    nodata=src_nodata,
                     area_or_point=elev.area_or_point,
-                    tags=elev.tags
+                    tags=elev.tags,
                 )
         else:
 
@@ -263,7 +264,7 @@ def apply_matrix(
                 out_transform=dst_transform,
                 **kwargs,
             )
-            print (src_transform, out_transform)
+            print(src_transform, out_transform)
 
             # We return a raster if input was a raster
             if isinstance(elev, gu.Raster):
@@ -307,7 +308,6 @@ def _apply_matrix_per_block(
     for arr, bid in zip(src_arrs, block_ids):
         comb_src_arr[..., bid["rys"] : bid["rye"], bid["rxs"] : bid["rxe"]] = arr
 
-
     # Now, we can simply call Rasterio!
     # We build the combined transform from tuple
     src_transform = rio.transform.Affine(*combined_meta["src_transform"])
@@ -319,13 +319,12 @@ def _apply_matrix_per_block(
     kwargs["resample"] = True
 
     dst_arr, out_transform = apply_matrix(elev=comb_src_arr, **kwargs)  # type: ignore
-    dst_arr = dst_arr[:combined_meta["dst_shape"][0], :combined_meta["dst_shape"][1]]
+    dst_arr = dst_arr[: combined_meta["dst_shape"][0], : combined_meta["dst_shape"][1]]
 
     """print ("in:", comb_src_arr)
     print ("apply_matrix out_transform", list(out_transform))
     print ("shape out:", combined_meta["dst_shape"])
     print ("out:", dst_arr)"""
-
 
     return dst_arr
 
@@ -385,10 +384,9 @@ def _multiproc_apply_matrix(
             src_chunks=src_chunks,
             dst_chunksizes=(mp_config.chunk_size, mp_config.chunk_size),
             matrix=kwargs["matrix"],
-            centroid=kwargs["centroid"]
+            centroid=kwargs["centroid"],
         )
     )
-
 
     # Get location of destination blocks to write file
     dst_block_ids = np.array(dst_geotiling.get_block_locations())
@@ -396,10 +394,10 @@ def _multiproc_apply_matrix(
     # Create tasks for multiprocessing
     tasks = []
 
-    print ()
+    print()
 
     for i in range(len(dest2source)):
-        print ("task", i, ")")
+        print("task", i, ")")
         tasks.append(
             mp_config.cluster.launch_task(
                 fun=_wrapper_multiproc_apply_matrix_per_block,
@@ -468,7 +466,7 @@ def _dask_apply_matrix(
             dst_chunksizes=dst_chunksizes,
             matrix=kwargs["matrix"],
             centroid=kwargs["centroid"],
-            invert=kwargs["invert"]
+            invert=kwargs["invert"],
         )
     )
 
