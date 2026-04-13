@@ -956,7 +956,7 @@ class RasterBase(ABC):
         if isinstance(other, xr.DataArray):
             transform = other.rst.transform
             shape = other.rst.shape
-            crs2d = CRS(other.rst.crs).to_2d()
+            crs2d = CRS(other.rst.crs).to_2d() if other.crs else None
             crs = other.rst.crs
         else:
             transform = other.transform

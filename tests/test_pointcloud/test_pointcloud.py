@@ -1448,3 +1448,27 @@ class TestArrayInterface:
                 np_func(pc_wrong_shape.data, pc)
             with pytest.raises(ValueError, match=re.escape(georef_pc_array_message)):
                 np_func(pc, pc_wrong_shape.data)
+
+    def test_info(self) -> None:
+
+        pc = gu.PointCloud.from_xyz(x=self.coords[0], y=self.coords[1], z=self.data1, crs=self.crs)
+
+        # Check default runs without error (prints to screen)
+        output = pc.info()
+        assert output is None
+
+        # Otherwise returns info
+        output2 = pc.info(verbose=False)
+        assert isinstance(output2, str)
+        list_prints = ["Filename", "Coordinate system", "Extent", "Number of features", "Attributes"]
+        assert all(p in output2 for p in list_prints)
+
+        # CRS = 2D
+        cs = pc.info(verbose=False).split("\n")[1]
+        assert cs == "Coordinate system:  ['WGS 84']"
+
+        # CRS = None
+        pc.set_crs(None, inplace=True, allow_override=True)
+
+        cs = pc.info(verbose=False).split("\n")[1]
+        assert cs == "Coordinate system:  [None]"

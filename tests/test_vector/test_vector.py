@@ -81,13 +81,14 @@ class TestVector:
         assert all(p in output2 for p in list_prints)
 
         # CRS = 2D
-        cs = v.info(verbose=False).split("\n")[6]
-        assert cs == "Coordinate system:    ['EPSG:32645']"
+        cs = v.info(verbose=False).split("\n")[1]
+        assert cs == "Coordinate system:  ['WGS 84']"
 
         # CRS = None
-        v.set_crs(None)
-        cs = v.info(verbose=False).split("\n")[6]
-        assert cs == "Coordinate system:    [None]"
+        v.set_crs(None, inplace=True, allow_override=True)
+
+        cs = v.info(verbose=False).split("\n")[1]
+        assert cs == "Coordinate system:  [None]"
 
     def test_to_file(self) -> None:
         """Test the save wrapper for GeoDataFrame.to_file()."""
