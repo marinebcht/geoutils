@@ -253,9 +253,17 @@ class Vector:
 
         :returns: Information about vector attributes.
         """
+        if self.ds.crs is not None:
+            if len(CRS(self.crs).axis_info) > 2:
+                crs = [CRS(self.ds.crs).name]
+            else:
+                crs = [f"EPSG:{self.ds.crs.to_epsg()}"]
+        else:
+            crs = [self.crs]
+
         as_str = [  # 'Driver:             {} \n'.format(self.driver),
             f"Filename:           {self.name} \n",
-            f"Coordinate system:  EPSG:{self.ds.crs.to_epsg()}\n",
+            f"Coordinate system:  {crs}\n",
             f"Extent:             {self.ds.total_bounds.tolist()} \n",
             f"Number of features: {len(self.ds)} \n",
             f"Attributes:         {self.ds.columns.tolist()}",
