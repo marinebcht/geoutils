@@ -591,6 +591,15 @@ class TestArithmetic:
 
         assert not pc1.georeferenced_coords_equal(self.pc1_wrong_coords)
 
+        # -- Test 3: only vcrs change --
+
+        pc2 = pc1.copy()
+        pc2 = pc2.set_crs(CompoundCRS(name="my_name", components=[pc2.crs, CRS("EPSG:5773")]), allow_override=True)
+        assert pc1.georeferenced_coords_equal(pc2, warn_3d_crs=False)
+        with pytest.raises(UserWarning, match="different vertical CRS"):
+            assert pc1.georeferenced_coords_equal(pc2)
+
+
     # List of operations with two operands
     ops_2args = [
         "__add__",
@@ -614,9 +623,7 @@ class TestArithmetic:
         warnings.filterwarnings("ignore", message="invalid value encountered")
 
         # Test various inputs: Point clouds with different dtypes, np.ndarray, single number
-        pc1 = self.pc1
         pc1_f32 = self.pc1_f32
-        pc2 = self.pc2
         pc2_zero = self.pc2_zero
         rng = np.random.default_rng(42)
         array = rng.integers(1, 255, self.nb_points).astype("float64")

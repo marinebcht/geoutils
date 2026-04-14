@@ -970,7 +970,7 @@ class RasterBase(ABC):
         gge = all([self.shape == shape, self.transform == transform, self_crs2d == crs2d])
 
         # The only way they differ is if the vertical CRS is different
-        if gge and crs != self.crs:
+        if gge and crs != self.crs and warn_3d_crs:
             warnings.warn(
                 "The two rasters have the same 2D CRS but a different vertical CRS: "
                 f"{CRS(self.crs).name} and {CRS(crs).name}.",
