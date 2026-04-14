@@ -190,16 +190,6 @@ class TestRaster:
                 continue
             assert line == new_stats.splitlines()[i]
 
-        # Coordinate system when CRS exits
-        assert r.info(verbose=False).split("\n")[6] == "Coordinate system:    ['" + CRS(r.crs).name + "']"
-
-        # Coordinate system when CRS 3D
-        r.set_crs(CompoundCRS(name="my_name", components=[r.crs, CRS("EPSG:5773")]))
-        assert r.info(verbose=False).split("\n")[6] == "Coordinate system:    ['my_name']"
-
-        # Coordinate system when CRS is None
-        r.set_crs(None)
-        assert r.info(verbose=False).split("\n")[6] == "Coordinate system:    [None]"
 
     def test_load(self) -> None:
         """

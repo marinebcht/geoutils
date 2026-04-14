@@ -533,20 +533,13 @@ class TestClassVsAccessorConsistency:
         ]
         assert all(p in output2 for p in list_prints)
 
-        # CRS = 2D
-        cs = raster.info(verbose=False).split("\n")[6]
-        assert cs == "Coordinate system:    ['EPSG:32645']"
+        # Coordinate system when CRS 2D
+        assert raster.info(verbose=False).split("\n")[6] == "Coordinate system:    ['EPSG:32645']"
 
-        # CRS = None
-        raster.set_crs(None)
-        cs = raster.info(verbose=False).split("\n")[6]
-        assert cs == "Coordinate system:    [None]"
+        # Coordinate system when CRS 3D
+        raster.set_crs(CompoundCRS(name="my_name", components=[v.crs, CRS("EPSG:5773")]), inplace=True, allow_override=True)
+        assert v.info(verbose=False).split("\n")[1] == "Coordinate system:  ['my_name']"
 
-        # CRS = 3D
-        vertcrs = VerticalCRS(name="EGM96 height", datum="EGM96 geoid")
-        projcrs = CRS(4326)
-        name = "my_crs_name"
-        compcrs = CompoundCRS(name=name, components=[projcrs, vertcrs])
-        raster.set_crs(compcrs)
-        cs = raster.info(verbose=False).split("\n")[6]
-        assert cs == "Coordinate system:    ['" + name + "']"
+        # Coordinate system when CRS is None
+        raster.set_crs(None, inplace=True, allow_override=True)
+        assert raster.info(verbose=False).split("\n")[1] == "Coordinate system:  [None]"
