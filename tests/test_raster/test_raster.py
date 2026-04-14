@@ -18,6 +18,8 @@ import pytest
 import rasterio as rio
 import xarray as xr
 from PIL import Image
+from pyproj import CRS
+from pyproj.crs import CompoundCRS
 
 import geoutils as gu
 from geoutils import examples
@@ -139,6 +141,25 @@ class TestRaster:
         output = r.info()
         assert output is None
 
+        # Otherwise returns info
+        output2 = r.info(verbose=False)
+        assert isinstance(output2, str)
+        list_prints = [
+            "Driver",
+            "Filename",
+            "Loaded",
+            "Grid size",
+            "Number of bands",
+            "Data types",
+            "Coordinate system",
+            "Nodata value",
+            "Pixel interpretation",
+            "Pixel size",
+            "Upper left corner",
+            "Lower right corner",
+        ]
+        assert all(p in output2 for p in list_prints)
+
         # Check all is good with passing attributes
         with rio.open(example) as dataset:
             for attr in _default_rio_attrs:
@@ -168,6 +189,17 @@ class TestRaster:
             if "MINIMUM" not in line:
                 continue
             assert line == new_stats.splitlines()[i]
+
+        # Coordinate system when CRS exits
+        assert r.info(verbose=False).split("\n")[6] == "Coordinate system:    ['" + CRS(r.crs).name + "']"
+
+        # Coordinate system when CRS 3D
+        r.set_crs(CompoundCRS(name="my_name", components=[r.crs, CRS("EPSG:5773")]))
+        assert r.info(verbose=False).split("\n")[6] == "Coordinate system:    ['my_name']"
+
+        # Coordinate system when CRS is None
+        r.set_crs(None)
+        assert r.info(verbose=False).split("\n")[6] == "Coordinate system:    [None]"
 
     def test_load(self) -> None:
         """

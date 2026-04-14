@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 from geopandas.testing import assert_geodataframe_equal
 from pyproj import CRS
+from pyproj.crs import CompoundCRS
 from shapely import Polygon
 
 import geoutils as gu
@@ -1463,12 +1464,15 @@ class TestArrayInterface:
         list_prints = ["Filename", "Coordinate system", "Extent", "Number of features", "Attributes"]
         assert all(p in output2 for p in list_prints)
 
-        # CRS = 2D
-        cs = pc.info(verbose=False).split("\n")[1]
-        assert cs == "Coordinate system:  ['WGS 84']"
+        # Coordinate system when CRS 2D
+        assert pc.info(verbose=False).split("\n")[1] == "Coordinate system:  ['WGS 84']"
 
-        # CRS = None
+        # Coordinate system when CRS 3D
+        pc.set_crs(
+            CompoundCRS(name="my_name", components=[pc.crs, CRS("EPSG:5773")]), inplace=True, allow_override=True
+        )
+        assert pc.info(verbose=False).split("\n")[1] == "Coordinate system:  ['my_name']"
+
+        # Coordinate system when CRS is None
         pc.set_crs(None, inplace=True, allow_override=True)
-
-        cs = pc.info(verbose=False).split("\n")[1]
-        assert cs == "Coordinate system:  [None]"
+        assert pc.info(verbose=False).split("\n")[1] == "Coordinate system:  [None]"
