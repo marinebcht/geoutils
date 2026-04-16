@@ -108,10 +108,10 @@ class TestApplyMatrixManipulation:
 
     # Vertical and horizontal shifts
     matrix_translations = matrix_identity.copy()
-    matrix_translations[:3, 3] = [3, 3, 1.5]
+    matrix_translations[:3, 3] = [0.5, 1, 1.5]
 
     # Single rotation
-    rotation = np.deg2rad(3)
+    rotation = np.deg2rad(5)
     matrix_rotations = matrix_identity.copy()
     matrix_rotations[1, 1] = np.cos(rotation)
     matrix_rotations[2, 2] = np.cos(rotation)
@@ -127,13 +127,15 @@ class TestApplyMatrixManipulation:
     trans_y = 1
     trans_z = 1.5
     # This is a 3x3 rotation matrix
-    matrix_all = matrix_from_translations_rotations(trans_x, trans_y, trans_z, rotation_x, rotation_y, rotation_z)
-
-    list_matrices = [matrix_identity, matrix_vertical, matrix_translations, matrix_rotations, matrix_all]
+    matrix_all = matrix_from_translations_rotations(
+        trans_x, trans_y, trans_z, rotation_x, rotation_y, rotation_z
+    )
+    list_matrices = [(0, matrix_identity), (1, matrix_vertical), (2, matrix_translations),
+                     (3, matrix_rotations), (4, matrix_all)]
 
     @pytest.mark.parametrize("path_index", [0])  # todo ?
     @pytest.mark.parametrize("matrix", list_matrices)
-    @pytest.mark.parametrize("chunk_size", [5, 8, 20])
+    @pytest.mark.parametrize("chunk_size", [6, 14])
     @pytest.mark.parametrize("invert", [False, True])
     @pytest.mark.parametrize("resampling", [None, "nearest", "linear", "cubic", "quintic"])
     def test_apply_matrix_dask_multi(
@@ -172,7 +174,7 @@ class TestApplyMatrixManipulation:
         # Multiprocessing input (lazy)
         raster_mp = gu.Raster(path_raster)
         assert not raster_mp.is_loaded
-        print(matrix)
+
         # Dask input (lazy)
         ds_dask = open_raster(path_raster, chunks={"x": chunk_size, "y": chunk_size})
         assert not ds_dask._in_memory
@@ -186,19 +188,37 @@ class TestApplyMatrixManipulation:
         if resample is False:
             resampling = "nearest"
 
+        # Run apply_matrix for each backend
+        print ("# run base")
+        base_am = gu.raster.apply_matrix_module.apply_matrix(
+            raster_base, matrix[1], invert=invert, centroid=centroid, resample=resample, resampling=resampling
+        )
+
+        # Valid classique apply_matrix
+        if resample is False:
+            path = str(matrix[0]) + "_" + str(invert) + "_" + str(resample) + "_None.tif"
+        else:
+            path = str(matrix[0]) + "_" + str(invert) + "_" + resampling + ".tif"
+
+        path = "/home/mbouchet/Documents/xDem_project/new_xdem/xdem/tmp/" + path
+        dem_ref_xdem = gu.Raster(path)
+        dem_ref_xdem.load()
+        assert isinstance(base_am, gu.Raster)
+        assert base_am.nodata == dem_ref_xdem.nodata
+        assert base_am.crs == dem_ref_xdem.crs
+        assert base_am.transform == dem_ref_xdem.transform
+        assert np.all(base_am.get_mask() == dem_ref_xdem.get_mask())
+        assert np.all(np.array(base_am.data - dem_ref_xdem.data)[base_am.get_mask() == False] < 10e-2)
+
+
+        print("# run multi")
+
         # Multiprocessing config
         multiproc_config = MultiprocConfig(chunk_size=chunk_size, outfile=tmp_path / "multi.tif")
 
-        # Run apply_matrix for each backend
-        print("BASE")
-        base_am = gu.raster.apply_matrix_module.apply_matrix(
-            raster_base, matrix, invert=invert, centroid=centroid, resample=resample, resampling=resampling
-        )
-
-        print("\nMULTI")
         mp_am = gu.raster.apply_matrix_module.apply_matrix(
             raster_base,
-            matrix,
+            matrix[1],
             invert=invert,
             centroid=centroid,
             resample=resample,
@@ -214,35 +234,29 @@ class TestApplyMatrixManipulation:
         # 5/ Output checks: all backends must match base
 
         # Multi
+        
+
         assert isinstance(mp_am, gu.Raster)
         assert mp_am.nodata == base_am.nodata
         # assert mp_am.dtype == type(matrix[0,0])
         assert mp_am.crs == base_am.crs
-        print(" mp_am.transform", mp_am.transform)
-        print(" base_am.transform", base_am.transform)
         assert mp_am.transform == base_am.transform
+        assert np.all(mp_am.get_mask() == base_am.get_mask())
         assert np.all(mp_am.get_mask() == base_am.get_mask())
 
         if resampling in ["nearest", "linear"]:
             diff = 10e-5
         else:
-            diff = 10e-2
-
-        from geoutils.raster.apply_matrix_function import _iterate_affine_regrid_small_rotations
-
-        """
-        new_dem, transform = _iterate_affine_regrid_small_rotations(
-            dem=raster_base, transform=raster_base.transform, matrix=matrix, centroid=centroid, resampling=resampling
-        )
-        """
+            diff = 10e-5
 
         assert np.all(np.array(base_am.data - mp_am.data)[base_am.get_mask() == False] < diff)
 
+
         # Dask
-        print("\nDASK")
+        print("# run dask")
 
         dask_am = gu.raster.apply_matrix_module.apply_matrix(
-            ds_dask.rst, matrix, invert=invert, centroid=centroid, resample=resample, resampling=resampling
+            ds_dask.rst, matrix[1], invert=invert, centroid=centroid, resample=resample, resampling=resampling
         )
 
         assert not dask_am._in_memory
@@ -251,11 +265,11 @@ class TestApplyMatrixManipulation:
         assert dask_am.rst.nodata == base_am.nodata
         assert dask_am.rst.dtype == base_am.dtype
         assert dask_am.rst.crs == base_am.crs
-        print(" base_am.transform", list(base_am.transform))
-        print(" dask_am.rst.transform", list(dask_am.rst.transform))
         assert dask_am.rst.transform == base_am.transform
+
         assert np.all(np.isnan(dask_am.rst.data[base_am.get_mask()]))
         assert np.all(np.array(base_am.data - dask_am.rst.data)[base_am.get_mask() == False] < diff)
+
 
 
 def test__rio_reproject():

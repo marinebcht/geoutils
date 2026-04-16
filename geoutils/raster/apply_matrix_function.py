@@ -97,119 +97,118 @@ def _build_geotiling_and_meta_apply_matrix(
     list[tuple[dict[str, Any], list[dict[str, int]]]],
     list[GeoGrid],
 ]:
-    """
-    Constructs georeferenced tiling information and reprojection metadata for both source and destination grids,
-    used to support block-wise reprojection operations (e.g. with multiprocessing or dask).
+        """
+        Constructs georeferenced tiling information and reprojection metadata for both source and destination grids,
+        used to support block-wise reprojection operations (e.g. with multiprocessing or dask).
 
-    This function performs the following:
+        This function performs the following:
 
-    1. Constructs `GeoGrid` and `ChunkedGeoGrid` objects for source and destination rasters,
-       based on provided shape, transform, CRS, and chunk sizes.
-    2. Computes spatial footprints for each chunk in both grids, and determines which
-       source chunks intersect each destination chunk (with a buffer to ensure overlap).
-    3. For each destination chunk, calculates metadata required for reprojection, including:
-       - The combined shape and transform of all intersecting source chunks.
-       - The specific shape and transform of the destination block.
+        1. Constructs `GeoGrid` and `ChunkedGeoGrid` objects for source and destination rasters,
+           based on provided shape, transform, CRS, and chunk sizes.
+        2. Computes spatial footprints for each chunk in both grids, and determines which
+           source chunks intersect each destination chunk (with a buffer to ensure overlap).
+        3. For each destination chunk, calculates metadata required for reprojection, including:
+           - The combined shape and transform of all intersecting source chunks.
+           - The specific shape and transform of the destination block.
 
-    :return: A tuple containing:
-        - Source `ChunkedGeoGrid`
-        - Destination `ChunkedGeoGrid`
-        - Destination chunks
-        - Mapping from destination to intersecting source block indices
-        - Array of source block locations
-        - List of metadata dictionaries per destination block
-        - List of destination `GeoGrid` blocks
-    """
-    # 1/ Define source and destination chunked georeferenced grid through simple classes storing CRS/transform/shape,
-    # which allow to consistently derive shape/transform for each block and their CRS-projected footprints
+        :return: A tuple containing:
+            - Source `ChunkedGeoGrid`
+            - Destination `ChunkedGeoGrid`
+            - Destination chunks
+            - Mapping from destination to intersecting source block indices
+            - Array of source block locations
+            - List of metadata dictionaries per destination block
+            - List of destination `GeoGrid` blocks
+        """
+        # 1/ Define source and destination chunked georeferenced grid through simple classes storing CRS/transform/shape,
+        # which allow to consistently derive shape/transform for each block and their CRS-projected footprints
 
-    # Define GeoGrids for source/destination array
-    src_geogrid = GeoGrid(transform=src_transform, shape=src_shape, crs=src_crs)
-    dst_geogrid = GeoGrid(transform=dst_transform, shape=dst_shape, crs=dst_crs)
+        # Define GeoGrids for source/destination array
+        src_geogrid = GeoGrid(transform=src_transform, shape=src_shape, crs=src_crs)
+        dst_geogrid = GeoGrid(transform=dst_transform, shape=dst_shape, crs=dst_crs)
 
-    # Create tilings
-    src_geotiling = ChunkedGeoGrid(grid=src_geogrid, chunks=src_chunks)
-    dst_chunks = _chunks2d_from_chunksizes_shape(chunksizes=dst_chunksizes, shape=dst_shape)
-    dst_geotiling = ChunkedGeoGrid(grid=dst_geogrid, chunks=dst_chunks)
+        # Create tilings
+        src_geotiling = ChunkedGeoGrid(grid=src_geogrid, chunks=src_chunks)
+        dst_chunks = _chunks2d_from_chunksizes_shape(chunksizes=dst_chunksizes, shape=dst_shape)
+        dst_geotiling = ChunkedGeoGrid(grid=dst_geogrid, chunks=dst_chunks)
 
-    # 2/ Get bounds of tiles in CRS of destination array, with a buffer of 2 pixels for destination ones to ensure
-    # overlap, then map indexes of source blocks that intersect a given destination block
+        # 2/ Get bounds of tiles in CRS of destination array, with a buffer of 2 pixels for destination ones to ensure
+        # overlap, then map indexes of source blocks that intersect a given destination block
 
-    src_boxes = [box(*gg.bounds_projected(crs=dst_crs)) for gg in src_geotiling.get_blocks_as_geogrids()]
+        src_boxes = [box(*gg.bounds_projected(crs=dst_crs)) for gg in src_geotiling.get_blocks_as_geogrids()]
 
-    def _wrapper_multiproc_nb_valids_per_block(rst: Raster, tile_idx: NDArrayNum) -> int:
-        """Count valid values in one tile out-of-memory."""
-        rst_block = rst.icrop((tile_idx["xs"], tile_idx["ys"], tile_idx["xe"], tile_idx["ye"]))
-        arr = rst_block.data
-        return arr.min(), arr.max()
+        def _wrapper_multiproc_nb_valids_per_block(rst: Raster, tile_idx: NDArrayNum) -> int:
+            """Count valid values in one tile out-of-memory."""
+            rst_block = rst.icrop((tile_idx["xs"], tile_idx["ys"], tile_idx["xe"], tile_idx["ye"]))
+            arr = rst_block.data
+            return arr.min(), arr.max()
 
-    dst_boxes = []
-    for k, gg in enumerate(dst_geotiling.get_blocks_as_geogrids()):
-        poly = box(*gg.bounds_projected(crs=dst_crs)).buffer(5 * max(dst_geogrid.res))
-        xx, yy = poly.exterior.coords.xy
-        # zz_min, zz_max = mp_config.cluster.launch_task(fun=_wrapper_multiproc_nb_valids_per_block, args=[rst, src_block_ids[k]], kwargs={})
-        # zz = np.ones(len(xx)) * (zz_max - zz_min)
-        zz = np.zeros(len(xx))
+        dst_boxes = []
+        for k, gg in enumerate(dst_geotiling.get_blocks_as_geogrids()):
+            poly = box(*gg.bounds_projected(crs=dst_crs)).buffer(4 * max(dst_geogrid.res))
+            xx, yy = poly.exterior.coords.xy
+            # zz_min, zz_max = mp_config.cluster.launch_task(fun=_wrapper_multiproc_nb_valids_per_block, args=[rst, src_block_ids[k]], kwargs={})
+            # zz = np.ones(len(xx)) * (zz_max - zz_min)
+            zz = np.zeros(len(xx))
 
-        dem = _apply_matrix_pts_arr(
-            x=list(xx), y=list(yy), z=list(zz), invert=not invert, matrix=matrix, centroid=centroid
-        )
-        poly_res = Polygon(zip(dem[0], dem[1]))
-        dst_boxes.append(poly_res)
+            dem = _apply_matrix_pts_arr(
+                x=list(xx), y=list(yy), z=list(zz), invert=not invert, matrix=matrix, centroid=centroid
+            )
+            poly_res = Polygon(zip(dem[0], dem[1]))
+            dst_boxes.append(poly_res)
 
-    # Faster to use spatial index over source boxes
-    tree = STRtree(src_boxes)
+        # Faster to use spatial index over source boxes
+        tree = STRtree(src_boxes)
 
-    # For Shapely 2.0: STRtree.query(..., predicate="intersects") is fastest, for earlier versions we filter manually
+        # For Shapely 2.0: STRtree.query(..., predicate="intersects") is fastest, for earlier versions we filter manually
 
-    # Quick feature check
-    try:
-        _ = tree.query(dst_boxes[0], predicate="intersects") if dst_boxes else []
-        has_predicate = True
-    except TypeError:
-        has_predicate = False
+        # Quick feature check
+        try:
+            _ = tree.query(dst_boxes[0], predicate="intersects") if dst_boxes else []
+            has_predicate = True
+        except TypeError:
+            has_predicate = False
 
-    # Build mapping: for each destination box, list intersecting source indices
-    dest2source: list[list[int]] = []
-    if has_predicate:
-        # Shapely 2: Query returns indices directly (int array)
-        for dst in dst_boxes:
-            idx = tree.query(dst, predicate="intersects")
-            dest2source.append([int(i) for i in np.asarray(idx).ravel()])
-    else:
-        # Shapely 1.8: Query returns geometries, so we convert to indices via id() map + filter intersects
-        id_to_idx = {id(g): i for i, g in enumerate(src_boxes)}
-        for dst in dst_boxes:
-            cand_geoms = tree.query(dst)
-            matches = [id_to_idx[id(g)] for g in cand_geoms if dst.intersects(g)]
-            dest2source.append(matches)
+        # Build mapping: for each destination box, list intersecting source indices
+        dest2source: list[list[int]] = []
+        if has_predicate:
+            # Shapely 2: Query returns indices directly (int array)
+            for dst in dst_boxes:
+                idx = tree.query(dst, predicate="intersects")
+                dest2source.append([int(i) for i in np.asarray(idx).ravel()])
+        else:
+            # Shapely 1.8: Query returns geometries, so we convert to indices via id() map + filter intersects
+            id_to_idx = {id(g): i for i, g in enumerate(src_boxes)}
+            for dst in dst_boxes:
+                cand_geoms = tree.query(dst)
+                matches = [id_to_idx[id(g)] for g in cand_geoms if dst.intersects(g)]
+                dest2source.append(matches)
 
-    print("dest2source", dest2source)
+        # 3/ To reconstruct a square source array during chunked reprojection, we need to derive the combined shape and
+        # transform of each tuples of source blocks
+        src_block_ids = src_geotiling.get_block_locations()
+        meta_params = [
+            (
+                _combined_blocks_shape_transform(sub_block_ids=[src_block_ids[i] for i in sbid], src_geogrid=src_geogrid)
+                if len(sbid) > 0
+                else ({}, [])
+            )
+            for sbid in dest2source
+        ]
 
-    # 3/ To reconstruct a square source array during chunked reprojection, we need to derive the combined shape and
-    # transform of each tuples of source blocks
-    src_block_ids = src_geotiling.get_block_locations()
-    meta_params = [
-        (
-            _combined_blocks_shape_transform(sub_block_ids=[src_block_ids[i] for i in sbid], src_geogrid=src_geogrid)
-            if len(sbid) > 0
-            else ({}, [])
-        )
-        for sbid in dest2source
-    ]
 
-    # Append dst shape/transform to metadata
-    dst_block_geogrids = dst_geotiling.get_blocks_as_geogrids()
-    for i, (c, _) in enumerate(meta_params):
-        c.update(
-            {
-                "dst_shape": dst_block_geogrids[i].shape,
-                "dst_transform": tuple(dst_block_geogrids[i].transform),
-                "dst_count": src_count,
-            }
-        )
+        # Append dst shape/transform to metadata
+        dst_block_geogrids = dst_geotiling.get_blocks_as_geogrids()
+        for i, (c, _) in enumerate(meta_params):
+            c.update(
+                {
+                    "dst_shape": dst_block_geogrids[i].shape,
+                    "dst_transform": tuple(dst_block_geogrids[i].transform),
+                    "dst_count": src_count,
+                }
+            )
 
-    return src_geotiling, dst_geotiling, dst_chunks, dest2source, src_block_ids, meta_params, dst_block_geogrids
+        return src_geotiling, dst_geotiling, dst_chunks, dest2source, src_block_ids, meta_params, dst_block_geogrids
 
 
 def _reproject_horizontal_shift_samecrs(
@@ -502,8 +501,9 @@ def _iterate_affine_regrid_small_rotations(
         # If another iteration is required, update Z guess and increment
         new_z = z0
         niter += 1
-    # print (niter, ")")
+
     # 4/ Write the regular-grid point cloud back into a raster
+
     epc.z = zfinal  # We just replace the Z of the original grid to ensure exact coordinates
     transformed_dem = dem_rst.from_pointcloud_regular(
         epc, transform=transform, shape=dem.shape, data_column_name="z", nodata=-99999
@@ -516,6 +516,138 @@ def _iterate_affine_regrid_small_rotations(
     """
     return transformed_dem.data.filled(np.nan), transform
 
+
+def _iterate_affine_regrid_small_rotations_old(
+    dem: NDArrayf,
+    transform: rio.transform.Affine,
+    matrix: NDArrayf,
+    centroid: tuple[float, float, float] | None = None,
+    resampling: Literal["nearest", "linear", "cubic", "quintic"] = "linear",
+) -> tuple[NDArrayf, rio.transform.Affine]:
+    """
+    Iterative process to find the best reprojection of affine transformation for small rotations.
+
+    Faster than regridding point cloud by triangulation of points (for instance with scipy.interpolate.griddata).
+    """
+
+    # Convert DEM to elevation point cloud, keeping all exact grid coordinates X/Y even for NaNs
+    dem_rst = geoutils.Raster.from_array(dem, transform=transform, crs=None, nodata=99999)
+    epc = dem_rst.to_pointcloud(data_column_name="z", skip_nodata=False).ds
+
+    # Exact affine transform of elevation point cloud (which yields irregular coordinates in 2D)
+    tz0 = _apply_matrix_pts_arr(
+        x=epc.geometry.x.values, y=epc.geometry.y.values, z=epc.z.values, matrix=matrix, centroid=centroid
+    )[2]
+
+    # We need to find the elevation Z of a transformed DEM at the exact grid coordinates X,Y
+    # Which means we need to find coordinates X',Y',Z' of the original DEM that, after the exact affine transform,
+    # fall exactly on regular X,Y coordinates
+
+    # 1/ The elevation of the original DEM, Z', is simply a 2D interpolator function of X',Y' (bilinear, typically)
+    # (We create the interpolator only once here for computational speed, instead of using Raster.interp_points)
+    xycoords = dem_rst.coords(grid=False)
+    z_interp = scipy.interpolate.RegularGridInterpolator(
+        points=(np.flip(xycoords[1], axis=0), xycoords[0]), values=dem, method=resampling, bounds_error=False
+    )
+
+    # 2/ As a first guess of a transformed DEM elevation Z near the grid coordinates, we initialize with the elevations
+    # of the nearest point from the transformed elevation point cloud
+
+    # OLD METHOD
+    # (Longest step computationally)
+    # with warnings.catch_warnings():
+    #     warnings.filterwarnings("ignore", category=UserWarning, message="Geometry is in a geographic CRS.*")
+    #     nearest = gpd.sjoin_nearest(epc, trans_epc)
+    #
+    # # In case several points are found at exactly the same distance, take the mean of their elevations
+    # new_z = nearest.groupby(by=nearest.index)["z_left"].mean().values
+
+    # NEW METHOD: Use the transformed elevation instead of searching for a nearest neighbour,
+    # is close enough for small rotations! (and only creates a couple more iterations instead of a full search)
+    new_z = tz0
+
+    # 3/ We then iterate between two steps until convergence:
+    # a/ Use the Z guess to derive invert affine transform X',Y' coordinates for the original DEM,
+    # b/ Interpolate Z' at new coordinates X',Y' on the original DEM, and apply affine transform to get updated Z guess
+
+    # Start with full array of X/Y regular coordinates (subset during iterations to improve computational efficiency)
+    x = epc.geometry.x.values
+    y = epc.geometry.y.values
+
+    # Initialize output z array, and array to store points that have converged
+    zfinal = np.ones(len(x), dtype=dem.dtype)
+    ind_converged = np.zeros(len(x), dtype=bool)
+
+    # For small rotations, and large DEMs (elevation range smaller than the DEM extent), this converges fast
+    max_niter = 20  # Maximum iteration number
+    niter_check = 5  # Number of iterations between residual checks
+    tolerance = 10 ** (-4)  # Tolerance in X/Y relative to resolution of X/Y
+    res_x = dem_rst.res[0]  # Resolution in X
+    res_y = dem_rst.res[1]  # Resolution in Y
+    niter = 1  # Starting iteration
+
+    while niter < max_niter:
+
+        # Invert X,Y (exact grid coordinates) with Z guess to find X',Y' coordinates on original DEM
+        tx, ty = _apply_matrix_pts_arr(x=x, y=y, z=new_z, matrix=matrix, invert=True, centroid=centroid)[:2]
+
+        # Interpolate original DEM at X', Y' to get Z', and convert to point cloud
+        tz = z_interp((ty, tx))
+
+        # Transform to see if we fall back on our feet (on the regular grid), or if we need to iterate more
+        x0, y0, z0 = _apply_matrix_pts_arr(x=tx, y=ty, z=tz, matrix=matrix, centroid=centroid)
+
+        # Only check residuals after first iteration (to remove NaNs) then every 5 iterations to reduce computing time
+        if niter == 1 or niter == niter_check:
+
+            # Compute difference between exact grid coordinates and current coordinates, and stop if tolerance reached
+            diff_x = x0 - x
+            diff_y = y0 - y
+
+            logging.debug(
+                "Residual check at iteration number %d:" "\n    Mean diff x: %f" "\n    Mean diff y: %f",
+                niter,
+                np.nanmean(np.abs(diff_x)),
+                np.nanmean(np.abs(diff_y)),
+            )
+
+            # Get index of points below tolerance in both X/Y for this subsample (all points before convergence update)
+            # Nodata values are considered having converged
+            subind_diff_x = np.logical_or(np.abs(diff_x) < (tolerance * res_x), ~np.isfinite(diff_x))
+            subind_diff_y = np.logical_or(np.abs(diff_y) < (tolerance * res_y), ~np.isfinite(diff_y))
+            subind_converged = np.logical_and(subind_diff_x, subind_diff_y)
+
+            logging.debug(
+                "    Points not within tolerance: %d for X; %d for Y",
+                np.count_nonzero(~subind_diff_x),
+                np.count_nonzero(~subind_diff_y),
+            )
+
+            # If all points left are below convergence, update Z one final time and stop here
+            if all(subind_converged):
+                zfinal[~ind_converged] = z0
+                break
+            # Otherwise, save Z for new converged points and keep only not converged in next iterations (for speed)
+            else:
+                zfinal[~ind_converged] = z0
+                x = x[~subind_converged]
+                y = y[~subind_converged]
+                z0 = z0[~subind_converged]
+
+            # Otherwise, for this check, update convergence status for points not having converged yet
+            ind_converged[~ind_converged] = subind_converged
+
+        # If another iteration is required, update Z guess and increment
+        new_z = z0
+        niter += 1
+
+    # 4/ Write the regular-grid point cloud back into a raster
+    epc.z = zfinal  # We just replace the Z of the original grid to ensure exact coordinates
+    transformed_dem = dem_rst.from_pointcloud_regular(
+        epc, transform=transform, shape=dem.shape, data_column_name="z", nodata=-99999
+    )
+
+    return transformed_dem.data.filled(np.nan), transform
 
 def _apply_matrix_rst(
     dem: NDArrayf,
@@ -546,6 +678,7 @@ def _apply_matrix_rst(
     :returns: Transformed DEM, Transform.
     """
 
+
     # Invert matrix if required
     if invert:
         matrix = invert_matrix(matrix)
@@ -568,13 +701,11 @@ def _apply_matrix_rst(
             dem, transform = dem + matrix[2, 3], src_transform
 
         # 2/ Check if the matrix contains only translations, in that case only shift the DEM only by translation
-        if np.array_equal(shift_only_matrix, matrix) and force_regrid_method is None:
+        elif np.array_equal(shift_only_matrix, matrix) and force_regrid_method is None:
             new_transform = _translate(src_transform, xoff=matrix[0, 3], yoff=matrix[1, 3])
-            print("new_transform", src_transform, new_transform)
             dem, transform = dem + matrix[2, 3], new_transform
 
-        # Then, if resample is True, we reproject the DEM from its out_transform onto the transform
-        if resample:
+        if resample or out_transform:
             dem = _reproject_horizontal_shift_samecrs(
                 dem, src_transform=transform, dst_transform=out_transform, resampling=resampling
             )
@@ -585,30 +716,34 @@ def _apply_matrix_rst(
     # 3/ If matrix contains only small rotations (less than 20 degrees), use the fast iterative reprojection
     rotations = translations_rotations_from_matrix(matrix)[3:]
     if all(np.abs(rot) < 20 for rot in rotations) and force_regrid_method is None or force_regrid_method == "iterative":
-        if isinstance(dem, np.ma.MaskedArray):
-            dem = np.array(dem)
-        new_dem, transform = _iterate_affine_regrid_small_rotations(
+        new_dem, transform = _iterate_affine_regrid_small_rotations_old(
             dem=dem, transform=src_transform, matrix=matrix, centroid=centroid, resampling=resampling
         )
-        print()
-    else:
-        # 4/ Otherwise, use a delauney triangulation interpolation of the transformed point cloud
-        # Convert DEM to elevation point cloud, keeping all exact grid coordinates X/Y even for NaNs
-        dem_rst = geoutils.Raster.from_array(dem, transform=src_transform, crs=None, nodata=99999)
-        epc = dem_rst.to_pointcloud(data_column_name="z").ds
-        trans_epc = _apply_matrix_pts(epc, matrix=matrix, centroid=centroid)
-        from geoutils.interface.gridding import _grid_pointcloud
 
-        new_dem = _grid_pointcloud(
-            trans_epc, grid_coords=dem_rst.coords(grid=False), data_column_name="z", resampling=resampling
-        )[0]
+        if resample or out_transform:
+            new_dem = _reproject_horizontal_shift_samecrs(
+                new_dem, src_transform=transform, dst_transform=out_transform, resampling=resampling
+            )
+            transform = out_transform
+        return new_dem, transform
 
+    # 4/ Otherwise, use a delauney triangulation interpolation of the transformed point cloud
+    # Convert DEM to elevation point cloud, keeping all exact grid coordinates X/Y even for NaNs
+    dem_rst = geoutils.Raster.from_array(dem, transform=src_transform, crs=None, nodata=99999)
+    epc = dem_rst.to_pointcloud(data_column_name="z").ds
+    trans_epc = _apply_matrix_pts(epc, matrix=matrix, centroid=centroid)
+
+    new_dem = _grid_pointcloud(
+        trans_epc, grid_coords=dem_rst.coords(grid=False), data_column_name="z", resampling=resampling
+    )[0]
+    transform = src_transform
     # Then, if resample is True, we reproject the DEM from its out_transform onto the transform
-    if resample:
-        new_dem = _reproject_horizontal_shift_samecrs(
-            new_dem, src_transform=transform, dst_transform=out_transform, resampling=resampling
+    if resample or out_transform:
+        dem = _reproject_horizontal_shift_samecrs(
+            dem, src_transform=transform, dst_transform=out_transform, resampling=resampling
         )
         transform = out_transform
+
     return new_dem, transform
 
 

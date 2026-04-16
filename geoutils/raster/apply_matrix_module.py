@@ -134,7 +134,6 @@ def apply_matrix(
     dask_backend = (
         da is not None and isinstance(elev, gu.raster.xr_accessor.RasterAccessor) and elev._chunks is not None
     )
-
     if multiproc_config and dask_backend:
         raise ValueError(
             "Cannot use Multiprocessing and Dask simultaneously. To use Dask, remove mp_config parameter "
@@ -150,7 +149,6 @@ def apply_matrix(
         if isinstance(elev, gu.Raster):
             src_transform = elev.transform
             dem = elev.data.filled(np.nan)
-            print(elev.transform)
             # dem.dem[elev.data==elev.nodata] = np.nan
             dem = elev.data.filled(np.nan)
             # dem = elev.data
@@ -186,19 +184,26 @@ def apply_matrix(
             }
 
             from geoutils.raster.transformation import _translate
-
+            apply_matrix_kwargs["dst_transform"] = src_transform
             if resample:
                 apply_matrix_kwargs["dst_transform"] = src_transform
             else:
-                if invert:
-                    from geoutils.raster.apply_matrix_function import invert_matrix
+                shift_only_matrix = np.diag(np.ones(4, float))
+                shift_only_matrix[:3, 3] = matrix[:3, 3]
 
-                    matrix_ = invert_matrix(matrix)
+                if np.array_equal(shift_only_matrix, matrix) :
+                    if invert:
+                        from geoutils.raster.apply_matrix_function import invert_matrix
+
+                        matrix_ = invert_matrix(matrix)
+                    else:
+                        matrix_ = matrix
+                    apply_matrix_kwargs["dst_transform"] = _translate(src_transform, xoff=matrix_[0, 3], yoff=matrix_[1, 3])
+
                 else:
-                    matrix_ = matrix
-                apply_matrix_kwargs["dst_transform"] = _translate(src_transform, xoff=matrix_[0, 3], yoff=matrix_[1, 3])
-            print(apply_matrix_kwargs["src_transform"])
-            print(apply_matrix_kwargs["dst_transform"])
+                    apply_matrix_kwargs["dst_transform"] = src_transform
+
+
             """
             bb = elev.get_bounds_projected(elev.crs)
             print (bb)
@@ -248,11 +253,9 @@ def apply_matrix(
         else:
 
             # Then, if resample is True, we reproject the DEM from its out_transform onto the transform
-
             if dst_transform is None:
                 if resample == True:
                     dst_transform = src_transform
-
             applied_dem, out_transform = _apply_matrix_rst(
                 dem=dem,
                 src_transform=src_transform,
@@ -264,7 +267,7 @@ def apply_matrix(
                 out_transform=dst_transform,
                 **kwargs,
             )
-            print(src_transform, out_transform)
+
 
             # We return a raster if input was a raster
             if isinstance(elev, gu.Raster):
@@ -312,20 +315,12 @@ def _apply_matrix_per_block(
     # We build the combined transform from tuple
     src_transform = rio.transform.Affine(*combined_meta["src_transform"])
     dst_transform = rio.transform.Affine(*combined_meta["dst_transform"])
-    # Apply matrix wrapper
-
     kwargs["src_transform"] = src_transform
     kwargs["dst_transform"] = dst_transform
-    kwargs["resample"] = True
 
+    # Apply matrix wrapper
     dst_arr, out_transform = apply_matrix(elev=comb_src_arr, **kwargs)  # type: ignore
     dst_arr = dst_arr[: combined_meta["dst_shape"][0], : combined_meta["dst_shape"][1]]
-
-    """print ("in:", comb_src_arr)
-    print ("apply_matrix out_transform", list(out_transform))
-    print ("shape out:", combined_meta["dst_shape"])
-    print ("out:", dst_arr)"""
-
     return dst_arr
 
 
@@ -394,10 +389,9 @@ def _multiproc_apply_matrix(
     # Create tasks for multiprocessing
     tasks = []
 
-    print()
+
 
     for i in range(len(dest2source)):
-        print("task", i, ")")
         tasks.append(
             mp_config.cluster.launch_task(
                 fun=_wrapper_multiproc_apply_matrix_per_block,
