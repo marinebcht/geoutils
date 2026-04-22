@@ -13,6 +13,7 @@ import xarray as xr
 from packaging.version import Version
 from pandas.testing import assert_frame_equal
 from pyproj import CRS
+from pyproj.crs import CompoundCRS, VerticalCRS
 
 from geoutils import Raster, Vector, open_raster
 from geoutils.raster import MultiprocConfig
@@ -504,3 +505,41 @@ class TestClassVsAccessorConsistency:
 
         # TODO: Finalize after consistent input check function #850
         assert True
+
+    def test_info(self, lazy_test_files: list[str]) -> None:
+        """Test info (+ Coordinate system)"""
+
+        path_raster = lazy_test_files[0]
+        raster = Raster(path_raster)
+        output = raster.info()
+        assert output is None
+
+        # General info
+        output2 = raster.info(verbose=False)
+        assert isinstance(output2, str)
+        list_prints = [
+            "Driver",
+            "Filename",
+            "Loaded?",
+            "Grid size",
+            "Number of bands",
+            "Data types",
+            "Coordinate system",
+            "Nodata value",
+            "Pixel interpretation",
+            "Pixel size",
+            "Upper left corner",
+            "Lower right corner",
+        ]
+        assert all(p in output2 for p in list_prints)
+
+        # Coordinate system when CRS 2D
+        assert raster.info(verbose=False).split("\n")[6] == "Coordinate system:    ['WGS 84 / UTM zone 45N']"
+
+        # Coordinate system when CRS 3D
+        raster.set_crs(CompoundCRS(name="my_name", components=[raster.crs, CRS("EPSG:5773")]))
+        assert raster.info(verbose=False).split("\n")[6] == "Coordinate system:    ['my_name']"
+
+        # Coordinate system when CRS is None
+        raster.set_crs(None)
+        assert raster.info(verbose=False).split("\n")[6] == "Coordinate system:    [None]"

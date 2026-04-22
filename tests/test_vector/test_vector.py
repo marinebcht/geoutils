@@ -15,6 +15,8 @@ import pyproj
 import pytest
 from geopandas.testing import assert_geodataframe_equal, assert_geoseries_equal
 from pandas.testing import assert_series_equal
+from pyproj import CRS
+from pyproj.crs import CompoundCRS
 from shapely.geometry.base import BaseGeometry
 from shapely.geometry.linestring import LineString
 from shapely.geometry.polygon import Polygon
@@ -67,7 +69,7 @@ class TestVector:
         assert vector2.ds.shape[0] < vector.ds.shape[0]
 
     def test_info(self) -> None:
-
+        """Test info (+ Coordinate system)"""
         v = gu.Vector(self.aster_outlines_path)
 
         # Check default runs without error (prints to screen)
@@ -79,6 +81,17 @@ class TestVector:
         assert isinstance(output2, str)
         list_prints = ["Filename", "Coordinate system", "Extent", "Number of features", "Attributes"]
         assert all(p in output2 for p in list_prints)
+
+        # Coordinate system when CRS 2D
+        assert v.info(verbose=False).split("\n")[1] == "Coordinate system:  ['WGS 84']"
+
+        # Coordinate system when CRS 3D
+        v.set_crs(CompoundCRS(name="my_name", components=[v.crs, CRS("EPSG:5773")]), inplace=True, allow_override=True)
+        assert v.info(verbose=False).split("\n")[1] == "Coordinate system:  ['my_name']"
+
+        # Coordinate system when CRS is None
+        v.set_crs(None, inplace=True, allow_override=True)
+        assert v.info(verbose=False).split("\n")[1] == "Coordinate system:  [None]"
 
     def test_to_file(self) -> None:
         """Test the save wrapper for GeoDataFrame.to_file()."""

@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 from geopandas.testing import assert_geodataframe_equal
 from pyproj import CRS
+from pyproj.crs import CompoundCRS
 from shapely import Polygon
 
 import geoutils as gu
@@ -589,6 +590,14 @@ class TestArithmetic:
         assert not pc1.georeferenced_coords_equal(self.pc1_wrong_shape)
 
         assert not pc1.georeferenced_coords_equal(self.pc1_wrong_coords)
+
+        # -- Test 3: only vcrs change --
+
+        pc2 = pc1.copy()
+        pc2 = pc2.set_crs(CompoundCRS(name="my_name", components=[pc2.crs, CRS("EPSG:5773")]), allow_override=True)
+        assert pc1.georeferenced_coords_equal(pc2, warn_3d_crs=False)
+        with pytest.raises(UserWarning, match="different vertical CRS"):
+            assert pc1.georeferenced_coords_equal(pc2)
 
     # List of operations with two operands
     ops_2args = [
@@ -1448,3 +1457,31 @@ class TestArrayInterface:
                 np_func(pc_wrong_shape.data, pc)
             with pytest.raises(ValueError, match=re.escape(georef_pc_array_message)):
                 np_func(pc, pc_wrong_shape.data)
+
+    def test_info(self) -> None:
+        """Test info (+ Coordinate system)"""
+
+        pc = gu.PointCloud.from_xyz(x=self.coords[0], y=self.coords[1], z=self.data1, crs=self.crs)
+
+        # Check default runs without error (prints to screen)
+        output = pc.info()
+        assert output is None
+
+        # Otherwise returns info
+        output2 = pc.info(verbose=False)
+        assert isinstance(output2, str)
+        list_prints = ["Filename", "Coordinate system", "Extent", "Number of features", "Attributes"]
+        assert all(p in output2 for p in list_prints)
+
+        # Coordinate system when CRS 2D
+        assert pc.info(verbose=False).split("\n")[1] == "Coordinate system:  ['WGS 84']"
+
+        # Coordinate system when CRS 3D
+        pc.set_crs(
+            CompoundCRS(name="my_name", components=[pc.crs, CRS("EPSG:5773")]), inplace=True, allow_override=True
+        )
+        assert pc.info(verbose=False).split("\n")[1] == "Coordinate system:  ['my_name']"
+
+        # Coordinate system when CRS is None
+        pc.set_crs(None, inplace=True, allow_override=True)
+        assert pc.info(verbose=False).split("\n")[1] == "Coordinate system:  [None]"

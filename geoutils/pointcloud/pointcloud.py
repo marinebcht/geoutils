@@ -1342,22 +1342,37 @@ class PointCloud(Vector):  # type: ignore[misc]
 
         return all([vector_eq, data_column_eq])
 
-    def georeferenced_coords_equal(self: PointCloud, pc: PointCloud) -> bool:
+    def georeferenced_coords_equal(self: PointCloud, pc: PointCloud, warn_3d_crs: bool = True) -> bool:
         """
         Check that point cloud X/Y coordinates and CRS are equal.
 
         :param pc: Another pointcloud.
+        :param warn_3d_crs: Whether to warn if 3D CRS differs.
 
         :return: Whether the two objects have the same georeferenced points.
         """
 
-        return all(
+        self_crs2d = CRS(self.crs).to_2d() if self.crs else None
+        other_2d = CRS(pc.crs).to_2d() if pc.crs else None
+
+        gge = all(
             [
-                self.crs == pc.crs,
+                self_crs2d == other_2d,
                 np.array_equal(self.geometry.x.values, pc.geometry.x.values),
                 np.array_equal(self.geometry.y.values, pc.geometry.y.values),
             ]
         )
+
+        # The only way they differ is if the vertical CRS is different
+        if gge and pc.crs != self.crs:
+            if warn_3d_crs:
+                warnings.warn(
+                    "The two point clouds have the same 2D CRS but a different vertical CRS: "
+                    f"{CRS(self.crs).name} and {CRS(pc.crs).name}.",
+                    category=UserWarning,
+                )
+
+        return gge
 
     @overload
     def get_stats(

@@ -956,24 +956,26 @@ class RasterBase(ABC):
         if isinstance(other, xr.DataArray):
             transform = other.rst.transform
             shape = other.rst.shape
-            crs2d = CRS(other.rst.crs).to_2d()
+            crs2d = CRS(other.rst.crs).to_2d() if other.rst.crs else None
             crs = other.rst.crs
         else:
             transform = other.transform
             shape = other.shape
-            crs2d = CRS(other.crs).to_2d()
+            crs2d = CRS(other.crs).to_2d() if other.crs else None
             crs = other.crs
 
         # 2D CRS for self
-        self_crs2d = CRS(self.crs).to_2d()
+        self_crs2d = CRS(self.crs).to_2d() if self.crs else None
 
         gge = all([self.shape == shape, self.transform == transform, self_crs2d == crs2d])
 
         # The only way they differ is if the vertical CRS is different
-        if gge and crs != self.crs:
-            warnings.warn("The two rasters have the same 2D CRS but a different vertical CRS: "
-                          f"{CRS(self.crs).name} and {CRS(crs).name}.",
-                          category=UserWarning)
+        if gge and crs != self.crs and warn_3d_crs:
+            warnings.warn(
+                "The two rasters have the same 2D CRS but a different vertical CRS: "
+                f"{CRS(self.crs).name} and {CRS(crs).name}.",
+                category=UserWarning,
+            )
 
         return gge
 

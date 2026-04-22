@@ -255,7 +255,7 @@ class Vector:
         """
         as_str = [  # 'Driver:             {} \n'.format(self.driver),
             f"Filename:           {self.name} \n",
-            f"Coordinate system:  EPSG:{self.ds.crs.to_epsg()}\n",
+            f"Coordinate system:  {[CRS(self.crs).name if self.crs is not None else None]}\n",
             f"Extent:             {self.ds.total_bounds.tolist()} \n",
             f"Number of features: {len(self.ds)} \n",
             f"Attributes:         {self.ds.columns.tolist()}",
