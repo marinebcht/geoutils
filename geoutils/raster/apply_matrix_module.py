@@ -380,6 +380,8 @@ def _multiproc_apply_matrix(
             dst_chunksizes=(mp_config.chunk_size, mp_config.chunk_size),
             matrix=kwargs["matrix"],
             centroid=kwargs["centroid"],
+            dem=rst,
+            mp_config=mp_config
         )
     )
 
@@ -461,6 +463,7 @@ def _dask_apply_matrix(
             matrix=kwargs["matrix"],
             centroid=kwargs["centroid"],
             invert=kwargs["invert"],
+            dem=darr,
         )
     )
 

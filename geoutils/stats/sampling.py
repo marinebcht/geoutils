@@ -474,7 +474,6 @@ def _dask_subsample(
 
     # To raise appropriate error on missing optional dependency
     import_optional("dask")
-
     # Get random state
     # For method="sequential", we use the RNG stream based on valid orders (chunk-dependent)
     # For method="topk", we convert random_state into an integer seed used in the deterministic key function
@@ -484,16 +483,25 @@ def _dask_subsample(
     blocks = darr.to_delayed().ravel()
 
     # Compute number of valid points for each block out-of-memory
+    for b in blocks:
+        print ("#", b, "=>", da.from_delayed(_delayed_nb_valids(b), shape=(1, 1), dtype=np.dtype("int32")))
+
     list_delayed_valids = [
         da.from_delayed(_delayed_nb_valids(b), shape=(1, 1), dtype=np.dtype("int32")) for b in blocks
     ]
+
     # Compute once, then flatten
     nb_valids_per_block = np.concatenate([x.ravel() for x in dask.compute(*list_delayed_valids)], axis=0).astype(
         np.int64
     )
+    print (dask.compute(*list_delayed_valids))
+    print (nb_valids_per_block)
+
 
     # Sum to get total number of valid points
     total_nb_valids = int(np.sum(nb_valids_per_block))
+
+    print (l)
 
     # Get subsample size (depending on user input)
     subsample_size = _get_subsample_size_from_user_input(subsample=subsample, total_nb_valids=total_nb_valids)
@@ -628,6 +636,8 @@ def _dask_subsample(
 
 def _wrapper_multiproc_nb_valids_per_block(rst: Raster, tile_idx: NDArrayNum) -> int:
     """Count valid values in one tile out-of-memory."""
+
+    print ("_wrapper", tile_idx)
     rst_block = rst.icrop((tile_idx[2], tile_idx[0], tile_idx[3], tile_idx[1]))
     arr = rst_block.data
 
@@ -776,8 +786,10 @@ def _multiproc_subsample(
     Returns a concatenated subsampled NumPy array collected from all tasks (either values or indices).
     """
 
+    print (("_multiproc_subsample"))
     # Get tiling
     tiling = compute_tiling(tile_size=config.chunk_size, raster_shape=rst.shape, overlap=0)
+    print (tiling)
 
     # Get number of chunks and blocks
     num_chunks = (tiling.shape[0], tiling.shape[1])
@@ -787,11 +799,15 @@ def _multiproc_subsample(
     indexes_row, indexes_col = np.unravel_index(np.arange(num_blocks), shape=num_chunks)
     tile_ids = [tiling[indexes_row[i], indexes_col[i], :] for i in range(num_blocks)]
 
+    print (num_blocks)
+
     # Count valid values per tile in parallel
     tasks = [
         config.cluster.launch_task(fun=_wrapper_multiproc_nb_valids_per_block, args=[rst, tile_ids[i]], kwargs={})
         for i in range(num_blocks)
     ]
+    print("0", config.cluster.get_res(tasks[0]))
+    print("1", config.cluster.get_res(tasks[1]))
     try:
         nb_valids_per_block = np.array([config.cluster.get_res(t) for t in tasks], dtype=np.int64)
     except Exception as e:

@@ -135,7 +135,7 @@ class TestApplyMatrixManipulation:
 
     @pytest.mark.parametrize("path_index", [0])  # todo ?
     @pytest.mark.parametrize("matrix", list_matrices)
-    @pytest.mark.parametrize("chunk_size", [6, 14])
+    @pytest.mark.parametrize("chunk_size", [5, 8, 12])
     @pytest.mark.parametrize("invert", [False, True])
     @pytest.mark.parametrize("resampling", [None, "nearest", "linear", "cubic", "quintic"])
     def test_apply_matrix_dask_multi(
@@ -193,7 +193,6 @@ class TestApplyMatrixManipulation:
         base_am = gu.raster.apply_matrix_module.apply_matrix(
             raster_base, matrix[1], invert=invert, centroid=centroid, resample=resample, resampling=resampling
         )
-
         # Valid classique apply_matrix
         if resample is False:
             path = str(matrix[0]) + "_" + str(invert) + "_" + str(resample) + "_None.tif"
@@ -210,6 +209,7 @@ class TestApplyMatrixManipulation:
         assert np.all(base_am.get_mask() == dem_ref_xdem.get_mask())
         assert np.all(np.array(base_am.data - dem_ref_xdem.data)[base_am.get_mask() == False] < 10e-2)
 
+        diff = 10e-5
 
         print("# run multi")
 
@@ -234,8 +234,6 @@ class TestApplyMatrixManipulation:
         # 5/ Output checks: all backends must match base
 
         # Multi
-        
-
         assert isinstance(mp_am, gu.Raster)
         assert mp_am.nodata == base_am.nodata
         # assert mp_am.dtype == type(matrix[0,0])
@@ -244,13 +242,9 @@ class TestApplyMatrixManipulation:
         assert np.all(mp_am.get_mask() == base_am.get_mask())
         assert np.all(mp_am.get_mask() == base_am.get_mask())
 
-        if resampling in ["nearest", "linear"]:
-            diff = 10e-5
-        else:
-            diff = 10e-5
+
 
         assert np.all(np.array(base_am.data - mp_am.data)[base_am.get_mask() == False] < diff)
-
 
         # Dask
         print("# run dask")
@@ -366,3 +360,10 @@ def test__regulargrid():
         bounds_error=False,
         fill_value=None,
     )
+
+"""def test_regulargrid():
+    from shapely import Polygon
+    coords = ((489700, 3098270), (489700, 3098570), (489340, 3098570), (489340, 3098270), (489700, 3098270))
+    polygon = Polygon(coords)
+    print (polygon)
+    print (l)"""

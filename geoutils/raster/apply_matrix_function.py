@@ -88,6 +88,8 @@ def _build_geotiling_and_meta_apply_matrix(
     matrix: NDArrayf,
     centroid: tuple[float, float, float] | None = None,
     invert: bool = False,
+    dem = None,
+    mp_config = None,
 ) -> tuple[
     ChunkedGeoGrid,
     ChunkedGeoGrid,
@@ -137,25 +139,58 @@ def _build_geotiling_and_meta_apply_matrix(
 
         src_boxes = [box(*gg.bounds_projected(crs=dst_crs)) for gg in src_geotiling.get_blocks_as_geogrids()]
 
-        def _wrapper_multiproc_nb_valids_per_block(rst: Raster, tile_idx: NDArrayNum) -> int:
-            """Count valid values in one tile out-of-memory."""
+        def _wrapper_multiproc_zmin_zmax_per_block(rst: Raster, tile_idx: NDArrayNum) -> int:
+            """Extract altitude min and max in a block."""
+            print (tile_idx)
             rst_block = rst.icrop((tile_idx["xs"], tile_idx["ys"], tile_idx["xe"], tile_idx["ye"]))
             arr = rst_block.data
             return arr.min(), arr.max()
 
-        dst_boxes = []
-        for k, gg in enumerate(dst_geotiling.get_blocks_as_geogrids()):
-            poly = box(*gg.bounds_projected(crs=dst_crs)).buffer(4 * max(dst_geogrid.res))
-            xx, yy = poly.exterior.coords.xy
-            # zz_min, zz_max = mp_config.cluster.launch_task(fun=_wrapper_multiproc_nb_valids_per_block, args=[rst, src_block_ids[k]], kwargs={})
-            # zz = np.ones(len(xx)) * (zz_max - zz_min)
-            zz = np.zeros(len(xx))
+        @delayed
+        def _delayed_zmin_zmax(arr_chunk: NDArrayNum | NDArrayBool) -> NDArrayNum:
+            """Count number of valid values per block."""
+            if arr_chunk.dtype == np.bool_:
+                return np.array([np.count_nonzero(arr_chunk)]).reshape((1, 1))
+            print ("len", len(arr_chunk), len(arr_chunk[0]), arr_chunk.min())
+            return np.array([arr_chunk.min(), arr_chunk.max()]) # np.array([np.count_nonzero(np.isfinite(arr_chunk))]).reshape((1, 1))
 
-            dem = _apply_matrix_pts_arr(
-                x=list(xx), y=list(yy), z=list(zz), invert=not invert, matrix=matrix, centroid=centroid
-            )
-            poly_res = Polygon(zip(dem[0], dem[1]))
-            dst_boxes.append(poly_res)
+
+
+        import dask
+        dst_boxes = []
+        for k, gg in enumerate(src_geotiling.get_blocks_as_geogrids()):
+            poly = box(*gg.bounds_projected(crs=dst_crs)).buffer(10 * max(dst_geogrid.res))
+            xx, yy = poly.exterior.coords.xy
+
+            if mp_config or isinstance(dem, dask.array.core.Array):
+                if mp_config:
+                    print("MULTI")
+                    zz_min, zz_max = mp_config.cluster.launch_task(fun=_wrapper_multiproc_zmin_zmax_per_block, args=[dem, src_geotiling.get_block_locations()[k]], kwargs={})            # zz = np.ones(len(xx)) * (zz_max - zz_min)
+
+                elif isinstance(dem, dask.array.core.Array):
+                    print ("DASK")
+                    blocks = dem.to_delayed().ravel()
+                    delayed_altitude_min_max = [da.from_delayed(_delayed_zmin_zmax(blocks[k]), shape=(1, 1), dtype=np.dtype("int32"))]
+                    zz_min, zz_max  = dask.compute(*delayed_altitude_min_max)[0]
+
+                dem_zz_min = _apply_matrix_pts_arr(
+                    x=list(xx), y=list(yy), z=list(np.ones(len(xx)) * zz_min), invert=not invert, matrix=matrix,
+                    centroid=centroid
+                )
+                poly_zz_min = Polygon(zip(dem_zz_min[0], dem_zz_min[1]))
+                dem_zz_max = _apply_matrix_pts_arr(
+                    x=list(xx), y=list(yy), z=list(np.ones(len(xx)) * zz_max), invert=not invert, matrix=matrix,
+                    centroid=centroid
+                )
+                poly_zz_max = Polygon(zip(dem_zz_max[0], dem_zz_max[1]))
+                poly_zz = poly_zz_min.union(poly_zz_max)
+            else:
+                dem_zz = _apply_matrix_pts_arr(
+                    x=list(xx), y=list(yy), z=list(np.zeros(len(xx))), invert=not invert, matrix=matrix, centroid=centroid
+                )
+                poly_zz = Polygon(zip(dem_zz[0], dem_zz[1]))
+
+            dst_boxes.append(poly_zz)
 
         # Faster to use spatial index over source boxes
         tree = STRtree(src_boxes)
