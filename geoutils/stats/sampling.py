@@ -484,7 +484,7 @@ def _dask_subsample(
 
     # Compute number of valid points for each block out-of-memory
     for b in blocks:
-        print ("#", b, "=>", da.from_delayed(_delayed_nb_valids(b), shape=(1, 1), dtype=np.dtype("int32")))
+        print("#", b, "=>", da.from_delayed(_delayed_nb_valids(b), shape=(1, 1), dtype=np.dtype("int32")))
 
     list_delayed_valids = [
         da.from_delayed(_delayed_nb_valids(b), shape=(1, 1), dtype=np.dtype("int32")) for b in blocks
@@ -494,14 +494,13 @@ def _dask_subsample(
     nb_valids_per_block = np.concatenate([x.ravel() for x in dask.compute(*list_delayed_valids)], axis=0).astype(
         np.int64
     )
-    print (dask.compute(*list_delayed_valids))
-    print (nb_valids_per_block)
-
+    print(dask.compute(*list_delayed_valids))
+    print(nb_valids_per_block)
 
     # Sum to get total number of valid points
     total_nb_valids = int(np.sum(nb_valids_per_block))
 
-    print (l)
+    print(l)
 
     # Get subsample size (depending on user input)
     subsample_size = _get_subsample_size_from_user_input(subsample=subsample, total_nb_valids=total_nb_valids)
@@ -637,7 +636,7 @@ def _dask_subsample(
 def _wrapper_multiproc_nb_valids_per_block(rst: Raster, tile_idx: NDArrayNum) -> int:
     """Count valid values in one tile out-of-memory."""
 
-    print ("_wrapper", tile_idx)
+    print("_wrapper", tile_idx)
     rst_block = rst.icrop((tile_idx[2], tile_idx[0], tile_idx[3], tile_idx[1]))
     arr = rst_block.data
 
@@ -786,10 +785,10 @@ def _multiproc_subsample(
     Returns a concatenated subsampled NumPy array collected from all tasks (either values or indices).
     """
 
-    print (("_multiproc_subsample"))
+    print(("_multiproc_subsample"))
     # Get tiling
     tiling = compute_tiling(tile_size=config.chunk_size, raster_shape=rst.shape, overlap=0)
-    print (tiling)
+    print(tiling)
 
     # Get number of chunks and blocks
     num_chunks = (tiling.shape[0], tiling.shape[1])
@@ -799,7 +798,7 @@ def _multiproc_subsample(
     indexes_row, indexes_col = np.unravel_index(np.arange(num_blocks), shape=num_chunks)
     tile_ids = [tiling[indexes_row[i], indexes_col[i], :] for i in range(num_blocks)]
 
-    print (num_blocks)
+    print(num_blocks)
 
     # Count valid values per tile in parallel
     tasks = [

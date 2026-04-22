@@ -88,8 +88,8 @@ def _build_geotiling_and_meta_apply_matrix(
     matrix: NDArrayf,
     centroid: tuple[float, float, float] | None = None,
     invert: bool = False,
-    dem = None,
-    mp_config = None,
+    dem=None,
+    mp_config=None,
 ) -> tuple[
     ChunkedGeoGrid,
     ChunkedGeoGrid,
@@ -99,151 +99,165 @@ def _build_geotiling_and_meta_apply_matrix(
     list[tuple[dict[str, Any], list[dict[str, int]]]],
     list[GeoGrid],
 ]:
-        """
-        Constructs georeferenced tiling information and reprojection metadata for both source and destination grids,
-        used to support block-wise reprojection operations (e.g. with multiprocessing or dask).
+    """
+    Constructs georeferenced tiling information and reprojection metadata for both source and destination grids,
+    used to support block-wise reprojection operations (e.g. with multiprocessing or dask).
 
-        This function performs the following:
+    This function performs the following:
 
-        1. Constructs `GeoGrid` and `ChunkedGeoGrid` objects for source and destination rasters,
-           based on provided shape, transform, CRS, and chunk sizes.
-        2. Computes spatial footprints for each chunk in both grids, and determines which
-           source chunks intersect each destination chunk (with a buffer to ensure overlap).
-        3. For each destination chunk, calculates metadata required for reprojection, including:
-           - The combined shape and transform of all intersecting source chunks.
-           - The specific shape and transform of the destination block.
+    1. Constructs `GeoGrid` and `ChunkedGeoGrid` objects for source and destination rasters,
+       based on provided shape, transform, CRS, and chunk sizes.
+    2. Computes spatial footprints for each chunk in both grids, and determines which
+       source chunks intersect each destination chunk (with a buffer to ensure overlap).
+    3. For each destination chunk, calculates metadata required for reprojection, including:
+       - The combined shape and transform of all intersecting source chunks.
+       - The specific shape and transform of the destination block.
 
-        :return: A tuple containing:
-            - Source `ChunkedGeoGrid`
-            - Destination `ChunkedGeoGrid`
-            - Destination chunks
-            - Mapping from destination to intersecting source block indices
-            - Array of source block locations
-            - List of metadata dictionaries per destination block
-            - List of destination `GeoGrid` blocks
-        """
-        # 1/ Define source and destination chunked georeferenced grid through simple classes storing CRS/transform/shape,
-        # which allow to consistently derive shape/transform for each block and their CRS-projected footprints
+    :return: A tuple containing:
+        - Source `ChunkedGeoGrid`
+        - Destination `ChunkedGeoGrid`
+        - Destination chunks
+        - Mapping from destination to intersecting source block indices
+        - Array of source block locations
+        - List of metadata dictionaries per destination block
+        - List of destination `GeoGrid` blocks
+    """
+    # 1/ Define source and destination chunked georeferenced grid through simple classes storing CRS/transform/shape,
+    # which allow to consistently derive shape/transform for each block and their CRS-projected footprints
 
-        # Define GeoGrids for source/destination array
-        src_geogrid = GeoGrid(transform=src_transform, shape=src_shape, crs=src_crs)
-        dst_geogrid = GeoGrid(transform=dst_transform, shape=dst_shape, crs=dst_crs)
+    # Define GeoGrids for source/destination array
+    src_geogrid = GeoGrid(transform=src_transform, shape=src_shape, crs=src_crs)
+    dst_geogrid = GeoGrid(transform=dst_transform, shape=dst_shape, crs=dst_crs)
 
-        # Create tilings
-        src_geotiling = ChunkedGeoGrid(grid=src_geogrid, chunks=src_chunks)
-        dst_chunks = _chunks2d_from_chunksizes_shape(chunksizes=dst_chunksizes, shape=dst_shape)
-        dst_geotiling = ChunkedGeoGrid(grid=dst_geogrid, chunks=dst_chunks)
+    # Create tilings
+    src_geotiling = ChunkedGeoGrid(grid=src_geogrid, chunks=src_chunks)
+    dst_chunks = _chunks2d_from_chunksizes_shape(chunksizes=dst_chunksizes, shape=dst_shape)
+    dst_geotiling = ChunkedGeoGrid(grid=dst_geogrid, chunks=dst_chunks)
 
-        # 2/ Get bounds of tiles in CRS of destination array, with a buffer of 2 pixels for destination ones to ensure
-        # overlap, then map indexes of source blocks that intersect a given destination block
+    # 2/ Get bounds of tiles in CRS of destination array, with a buffer of 2 pixels for destination ones to ensure
+    # overlap, then map indexes of source blocks that intersect a given destination block
 
-        src_boxes = [box(*gg.bounds_projected(crs=dst_crs)) for gg in src_geotiling.get_blocks_as_geogrids()]
+    src_boxes = [box(*gg.bounds_projected(crs=dst_crs)) for gg in src_geotiling.get_blocks_as_geogrids()]
 
-        def _wrapper_multiproc_zmin_zmax_per_block(rst: Raster, tile_idx: NDArrayNum) -> int:
-            """Extract altitude min and max in a block."""
-            print (tile_idx)
-            rst_block = rst.icrop((tile_idx["xs"], tile_idx["ys"], tile_idx["xe"], tile_idx["ye"]))
-            arr = rst_block.data
-            return arr.min(), arr.max()
+    def _wrapper_multiproc_zmin_zmax_per_block(rst: Raster, tile_idx: NDArrayNum) -> int:
+        """Extract altitude min and max in a block."""
+        print(tile_idx)
+        rst_block = rst.icrop((tile_idx["xs"], tile_idx["ys"], tile_idx["xe"], tile_idx["ye"]))
+        arr = rst_block.data
+        return arr.min(), arr.max()
 
-        @delayed
-        def _delayed_zmin_zmax(arr_chunk: NDArrayNum | NDArrayBool) -> NDArrayNum:
-            """Count number of valid values per block."""
-            if arr_chunk.dtype == np.bool_:
-                return np.array([np.count_nonzero(arr_chunk)]).reshape((1, 1))
-            print ("len", len(arr_chunk), len(arr_chunk[0]), arr_chunk.min())
-            return np.array([arr_chunk.min(), arr_chunk.max()]) # np.array([np.count_nonzero(np.isfinite(arr_chunk))]).reshape((1, 1))
+    @delayed
+    def _delayed_zmin_zmax(arr_chunk: NDArrayNum | NDArrayBool) -> NDArrayNum:
+        """Count number of valid values per block."""
+        if arr_chunk.dtype == np.bool_:
+            return np.array([np.count_nonzero(arr_chunk)]).reshape((1, 1))
+        print("len", len(arr_chunk), len(arr_chunk[0]), arr_chunk.min())
+        return np.array(
+            [arr_chunk.min(), arr_chunk.max()]
+        )  # np.array([np.count_nonzero(np.isfinite(arr_chunk))]).reshape((1, 1))
 
+    import dask
 
+    dst_boxes = []
+    for k, gg in enumerate(src_geotiling.get_blocks_as_geogrids()):
+        poly = box(*gg.bounds_projected(crs=dst_crs)).buffer(10 * max(dst_geogrid.res))
+        xx, yy = poly.exterior.coords.xy
 
-        import dask
-        dst_boxes = []
-        for k, gg in enumerate(src_geotiling.get_blocks_as_geogrids()):
-            poly = box(*gg.bounds_projected(crs=dst_crs)).buffer(10 * max(dst_geogrid.res))
-            xx, yy = poly.exterior.coords.xy
+        if mp_config or isinstance(dem, dask.array.core.Array):
+            if mp_config:
+                print("MULTI")
+                zz_min, zz_max = mp_config.cluster.launch_task(
+                    fun=_wrapper_multiproc_zmin_zmax_per_block,
+                    args=[dem, src_geotiling.get_block_locations()[k]],
+                    kwargs={},
+                )  # zz = np.ones(len(xx)) * (zz_max - zz_min)
 
-            if mp_config or isinstance(dem, dask.array.core.Array):
-                if mp_config:
-                    print("MULTI")
-                    zz_min, zz_max = mp_config.cluster.launch_task(fun=_wrapper_multiproc_zmin_zmax_per_block, args=[dem, src_geotiling.get_block_locations()[k]], kwargs={})            # zz = np.ones(len(xx)) * (zz_max - zz_min)
+            elif isinstance(dem, dask.array.core.Array):
+                print("DASK")
+                blocks = dem.to_delayed().ravel()
+                delayed_altitude_min_max = [
+                    da.from_delayed(_delayed_zmin_zmax(blocks[k]), shape=(1, 1), dtype=np.dtype("int32"))
+                ]
+                zz_min, zz_max = dask.compute(*delayed_altitude_min_max)[0]
 
-                elif isinstance(dem, dask.array.core.Array):
-                    print ("DASK")
-                    blocks = dem.to_delayed().ravel()
-                    delayed_altitude_min_max = [da.from_delayed(_delayed_zmin_zmax(blocks[k]), shape=(1, 1), dtype=np.dtype("int32"))]
-                    zz_min, zz_max  = dask.compute(*delayed_altitude_min_max)[0]
-
-                dem_zz_min = _apply_matrix_pts_arr(
-                    x=list(xx), y=list(yy), z=list(np.ones(len(xx)) * zz_min), invert=not invert, matrix=matrix,
-                    centroid=centroid
-                )
-                poly_zz_min = Polygon(zip(dem_zz_min[0], dem_zz_min[1]))
-                dem_zz_max = _apply_matrix_pts_arr(
-                    x=list(xx), y=list(yy), z=list(np.ones(len(xx)) * zz_max), invert=not invert, matrix=matrix,
-                    centroid=centroid
-                )
-                poly_zz_max = Polygon(zip(dem_zz_max[0], dem_zz_max[1]))
-                poly_zz = poly_zz_min.union(poly_zz_max)
-            else:
-                dem_zz = _apply_matrix_pts_arr(
-                    x=list(xx), y=list(yy), z=list(np.zeros(len(xx))), invert=not invert, matrix=matrix, centroid=centroid
-                )
-                poly_zz = Polygon(zip(dem_zz[0], dem_zz[1]))
-
-            dst_boxes.append(poly_zz)
-
-        # Faster to use spatial index over source boxes
-        tree = STRtree(src_boxes)
-
-        # For Shapely 2.0: STRtree.query(..., predicate="intersects") is fastest, for earlier versions we filter manually
-
-        # Quick feature check
-        try:
-            _ = tree.query(dst_boxes[0], predicate="intersects") if dst_boxes else []
-            has_predicate = True
-        except TypeError:
-            has_predicate = False
-
-        # Build mapping: for each destination box, list intersecting source indices
-        dest2source: list[list[int]] = []
-        if has_predicate:
-            # Shapely 2: Query returns indices directly (int array)
-            for dst in dst_boxes:
-                idx = tree.query(dst, predicate="intersects")
-                dest2source.append([int(i) for i in np.asarray(idx).ravel()])
+            dem_zz_min = _apply_matrix_pts_arr(
+                x=list(xx),
+                y=list(yy),
+                z=list(np.ones(len(xx)) * zz_min),
+                invert=not invert,
+                matrix=matrix,
+                centroid=centroid,
+            )
+            poly_zz_min = Polygon(zip(dem_zz_min[0], dem_zz_min[1]))
+            dem_zz_max = _apply_matrix_pts_arr(
+                x=list(xx),
+                y=list(yy),
+                z=list(np.ones(len(xx)) * zz_max),
+                invert=not invert,
+                matrix=matrix,
+                centroid=centroid,
+            )
+            poly_zz_max = Polygon(zip(dem_zz_max[0], dem_zz_max[1]))
+            poly_zz = poly_zz_min.union(poly_zz_max)
         else:
-            # Shapely 1.8: Query returns geometries, so we convert to indices via id() map + filter intersects
-            id_to_idx = {id(g): i for i, g in enumerate(src_boxes)}
-            for dst in dst_boxes:
-                cand_geoms = tree.query(dst)
-                matches = [id_to_idx[id(g)] for g in cand_geoms if dst.intersects(g)]
-                dest2source.append(matches)
-
-        # 3/ To reconstruct a square source array during chunked reprojection, we need to derive the combined shape and
-        # transform of each tuples of source blocks
-        src_block_ids = src_geotiling.get_block_locations()
-        meta_params = [
-            (
-                _combined_blocks_shape_transform(sub_block_ids=[src_block_ids[i] for i in sbid], src_geogrid=src_geogrid)
-                if len(sbid) > 0
-                else ({}, [])
+            dem_zz = _apply_matrix_pts_arr(
+                x=list(xx), y=list(yy), z=list(np.zeros(len(xx))), invert=not invert, matrix=matrix, centroid=centroid
             )
-            for sbid in dest2source
-        ]
+            poly_zz = Polygon(zip(dem_zz[0], dem_zz[1]))
 
+        dst_boxes.append(poly_zz)
 
-        # Append dst shape/transform to metadata
-        dst_block_geogrids = dst_geotiling.get_blocks_as_geogrids()
-        for i, (c, _) in enumerate(meta_params):
-            c.update(
-                {
-                    "dst_shape": dst_block_geogrids[i].shape,
-                    "dst_transform": tuple(dst_block_geogrids[i].transform),
-                    "dst_count": src_count,
-                }
-            )
+    # Faster to use spatial index over source boxes
+    tree = STRtree(src_boxes)
 
-        return src_geotiling, dst_geotiling, dst_chunks, dest2source, src_block_ids, meta_params, dst_block_geogrids
+    # For Shapely 2.0: STRtree.query(..., predicate="intersects") is fastest, for earlier versions we filter manually
+
+    # Quick feature check
+    try:
+        _ = tree.query(dst_boxes[0], predicate="intersects") if dst_boxes else []
+        has_predicate = True
+    except TypeError:
+        has_predicate = False
+
+    # Build mapping: for each destination box, list intersecting source indices
+    dest2source: list[list[int]] = []
+    if has_predicate:
+        # Shapely 2: Query returns indices directly (int array)
+        for dst in dst_boxes:
+            idx = tree.query(dst, predicate="intersects")
+            dest2source.append([int(i) for i in np.asarray(idx).ravel()])
+    else:
+        # Shapely 1.8: Query returns geometries, so we convert to indices via id() map + filter intersects
+        id_to_idx = {id(g): i for i, g in enumerate(src_boxes)}
+        for dst in dst_boxes:
+            cand_geoms = tree.query(dst)
+            matches = [id_to_idx[id(g)] for g in cand_geoms if dst.intersects(g)]
+            dest2source.append(matches)
+
+    # 3/ To reconstruct a square source array during chunked reprojection, we need to derive the combined shape and
+    # transform of each tuples of source blocks
+    src_block_ids = src_geotiling.get_block_locations()
+    meta_params = [
+        (
+            _combined_blocks_shape_transform(sub_block_ids=[src_block_ids[i] for i in sbid], src_geogrid=src_geogrid)
+            if len(sbid) > 0
+            else ({}, [])
+        )
+        for sbid in dest2source
+    ]
+
+    # Append dst shape/transform to metadata
+    dst_block_geogrids = dst_geotiling.get_blocks_as_geogrids()
+    for i, (c, _) in enumerate(meta_params):
+        c.update(
+            {
+                "dst_shape": dst_block_geogrids[i].shape,
+                "dst_transform": tuple(dst_block_geogrids[i].transform),
+                "dst_count": src_count,
+            }
+        )
+
+    return src_geotiling, dst_geotiling, dst_chunks, dest2source, src_block_ids, meta_params, dst_block_geogrids
 
 
 def _reproject_horizontal_shift_samecrs(
@@ -684,6 +698,7 @@ def _iterate_affine_regrid_small_rotations_old(
 
     return transformed_dem.data.filled(np.nan), transform
 
+
 def _apply_matrix_rst(
     dem: NDArrayf,
     src_transform: rio.transform.Affine,
@@ -712,7 +727,6 @@ def _apply_matrix_rst(
 
     :returns: Transformed DEM, Transform.
     """
-
 
     # Invert matrix if required
     if invert:

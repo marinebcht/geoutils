@@ -175,9 +175,9 @@ class TestSubsampleChunked:
             strategy=strategy,
         )
 
-        print (l)
+        print(l)
 
-        print ("\n\n\n multi resample")
+        print("\n\n\n multi resample")
         # Multiprocessing backend via Raster: output is eager by design, input raster stays lazy
         out_mp = raster_mp.subsample(
             subsample=subsample,

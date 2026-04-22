@@ -184,6 +184,7 @@ def apply_matrix(
             }
 
             from geoutils.raster.transformation import _translate
+
             apply_matrix_kwargs["dst_transform"] = src_transform
             if resample:
                 apply_matrix_kwargs["dst_transform"] = src_transform
@@ -191,18 +192,19 @@ def apply_matrix(
                 shift_only_matrix = np.diag(np.ones(4, float))
                 shift_only_matrix[:3, 3] = matrix[:3, 3]
 
-                if np.array_equal(shift_only_matrix, matrix) :
+                if np.array_equal(shift_only_matrix, matrix):
                     if invert:
                         from geoutils.raster.apply_matrix_function import invert_matrix
 
                         matrix_ = invert_matrix(matrix)
                     else:
                         matrix_ = matrix
-                    apply_matrix_kwargs["dst_transform"] = _translate(src_transform, xoff=matrix_[0, 3], yoff=matrix_[1, 3])
+                    apply_matrix_kwargs["dst_transform"] = _translate(
+                        src_transform, xoff=matrix_[0, 3], yoff=matrix_[1, 3]
+                    )
 
                 else:
                     apply_matrix_kwargs["dst_transform"] = src_transform
-
 
             """
             bb = elev.get_bounds_projected(elev.crs)
@@ -267,7 +269,6 @@ def apply_matrix(
                 out_transform=dst_transform,
                 **kwargs,
             )
-
 
             # We return a raster if input was a raster
             if isinstance(elev, gu.Raster):
@@ -381,7 +382,7 @@ def _multiproc_apply_matrix(
             matrix=kwargs["matrix"],
             centroid=kwargs["centroid"],
             dem=rst,
-            mp_config=mp_config
+            mp_config=mp_config,
         )
     )
 
@@ -390,8 +391,6 @@ def _multiproc_apply_matrix(
 
     # Create tasks for multiprocessing
     tasks = []
-
-
 
     for i in range(len(dest2source)):
         tasks.append(

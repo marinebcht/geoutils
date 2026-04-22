@@ -127,11 +127,14 @@ class TestApplyMatrixManipulation:
     trans_y = 1
     trans_z = 1.5
     # This is a 3x3 rotation matrix
-    matrix_all = matrix_from_translations_rotations(
-        trans_x, trans_y, trans_z, rotation_x, rotation_y, rotation_z
-    )
-    list_matrices = [(0, matrix_identity), (1, matrix_vertical), (2, matrix_translations),
-                     (3, matrix_rotations), (4, matrix_all)]
+    matrix_all = matrix_from_translations_rotations(trans_x, trans_y, trans_z, rotation_x, rotation_y, rotation_z)
+    list_matrices = [
+        (0, matrix_identity),
+        (1, matrix_vertical),
+        (2, matrix_translations),
+        (3, matrix_rotations),
+        (4, matrix_all),
+    ]
 
     @pytest.mark.parametrize("path_index", [0])  # todo ?
     @pytest.mark.parametrize("matrix", list_matrices)
@@ -189,7 +192,7 @@ class TestApplyMatrixManipulation:
             resampling = "nearest"
 
         # Run apply_matrix for each backend
-        print ("# run base")
+        print("# run base")
         base_am = gu.raster.apply_matrix_module.apply_matrix(
             raster_base, matrix[1], invert=invert, centroid=centroid, resample=resample, resampling=resampling
         )
@@ -242,8 +245,6 @@ class TestApplyMatrixManipulation:
         assert np.all(mp_am.get_mask() == base_am.get_mask())
         assert np.all(mp_am.get_mask() == base_am.get_mask())
 
-
-
         assert np.all(np.array(base_am.data - mp_am.data)[base_am.get_mask() == False] < diff)
 
         # Dask
@@ -263,7 +264,6 @@ class TestApplyMatrixManipulation:
 
         assert np.all(np.isnan(dask_am.rst.data[base_am.get_mask()]))
         assert np.all(np.array(base_am.data - dask_am.rst.data)[base_am.get_mask() == False] < diff)
-
 
 
 def test__rio_reproject():
@@ -360,6 +360,7 @@ def test__regulargrid():
         bounds_error=False,
         fill_value=None,
     )
+
 
 """def test_regulargrid():
     from shapely import Polygon
